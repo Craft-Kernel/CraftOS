@@ -13,6 +13,8 @@ extern struct window taskman_window;
 extern struct window dialog_window;
 extern struct window imgview_window;
 extern struct window mines_window;
+extern struct window solitaire_window;
+extern struct window recycle_window;
 
 void terminal_init(void);
 
@@ -35,5 +37,5 @@ bool is_image_name(const char *name);
 int taskman_kill(int pid);
 
 #define KERNEL_KILL_WARNING \
-    "this is a kernel task. killing this task can and will crash your system, " \
-    "possibly rendering it unusable depending on what's happening. are you sure?"
+    "This is a kernel task. Killing this task can and will crash your system, " \
+    "possibly rendering it unusable depending on what's happening. Are you sure?"

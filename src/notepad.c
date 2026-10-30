@@ -4,20 +4,26 @@
 #include <string.h>
 
 /*
- * notepad edits one buffer of text. when it's opened on a file from the ram
- * disk, that buffer is the file itself, so every key you press is saved
- * straight away, and the terminal sees the changes at once. otherwise it
- * edits a scratch buffer that isn't saved anywhere.
+ * notepad edits a copy of a file in a buffer of its own, and only writes it
+ * back when you save. a star after the name in the title bar means you've
+ * made changes that haven't been saved yet.
  *
- * read-only and live files (like /proc/uptime) open as something to look at:
- * they get read again on every redraw, so live ones keep updating, and typing
- * does nothing. if a file gets deleted while it's open, notepad quietly goes
- * back to the scratch buffer.
+ * the toolbar has new, save and save as. save writes back to the file you
+ * opened. for a brand new document, or a file that can't be written to
+ * (system files and live files open read-only), it asks for a name instead.
+ * names are taken to be in your home folder unless they start with / or ~.
+ *
+ * if you've got unsaved changes, closing the window, starting a new document
+ * or opening a different file all ask you first.
  */
 
-static char scratch[FS_FILE_MAX];
-static int scratch_len;
-static char view[FS_FILE_MAX];
+#define NOTE_MAX   16384
+#define TOOLBAR_H  28
+#define BUTTON_H   22
+
+static char text[NOTE_MAX + 1];
+static int text_len;
+static bool dirty;
 
 static int file = -1;
 static uint32_t file_id;
@@ -35,64 +41,181 @@ static bool key(struct window *win, char c);
 static bool click(struct window *win, int x, int y, bool double_click);
 static bool drag(struct window *win, int x, int y);
 static bool scroll(struct window *win, int rows);
+static bool can_close(struct window *win);
 
 struct window notepad_window = {
-    .title = "Notepad", .proc = "notepad", .x = 120, .y = 110, .w = 400, .h = 250,
-    .min_w = 200, .min_h = 120, .resizable = true,
+    .title = "Notepad", .proc = "notepad", .icon = "notes", .x = 120, .y = 90, .w = 420, .h = 280,
+    .min_w = 260, .min_h = 140, .resizable = true,
     .draw = draw, .key = key, .click = click, .drag = drag, .scroll = scroll,
+    .can_close = can_close,
 };
 
-/*
- * the text to show, and whether it can be edited. for a file that can be
- * edited, the length pointer is the file's own size, so edits go straight
- * into the file.
- */
-static char *contents(int **len, bool *editable)
-{
-    static int view_len;
+enum { BTN_NEW, BTN_SAVE, BTN_SAVE_AS, BTN_COUNT };
 
+static const struct {
+    const char *label;
+    int x, w;
+} buttons[BTN_COUNT] = {
+    [BTN_NEW] = { "New", 2, 52 },
+    [BTN_SAVE] = { "Save", 58, 52 },
+    [BTN_SAVE_AS] = { "Save As...", 114, 86 },
+};
+
+/* ---- the document ---- */
+
+static bool has_file(void)
+{
     if (file >= 0 && !fs_alive(file, file_id)) {
         file = -1;
-        strlcpy(notepad_window.title, "Notepad", sizeof(notepad_window.title));
+        dirty = true;
     }
-    if (file < 0) {
-        *len = &scratch_len;
-        *editable = true;
-        return scratch;
+    return file >= 0;
+}
+
+static void update_title(void)
+{
+    const char *name = has_file() ? fs_node(file)->name : "untitled";
+    ksnprintf(notepad_window.title, sizeof(notepad_window.title), "Notepad - %s%s", name, dirty ? "*" : "");
+}
+
+static void load(int node)
+{
+    if (node >= 0) {
+        int len = fs_read(node, text, sizeof(text));
+        text_len = len < 0 ? 0 : len;
+        file = node;
+        file_id = fs_node(node)->id;
+    } else {
+        text_len = 0;
+        file = -1;
     }
-    if (fs_editable(file)) {
-        *len = &fs_node(file)->size;
-        *editable = true;
-        return fs_node(file)->data;
+    dirty = false;
+    follow = true;
+    sb.offset = 0;
+    update_title();
+}
+
+/*
+ * opening a file or starting fresh with unsaved changes asks first. the node
+ * waiting to be opened (-1 for a new document) gets passed along as the
+ * dialog's context, so we know what to open if you say yes.
+ */
+static void discard_and_load(void *ctx)
+{
+    load((int)(intptr_t)ctx);
+}
+
+static void load_asking(int node)
+{
+    if (!dirty) {
+        load(node);
+        return;
     }
-    view_len = fs_read(file, view, sizeof(view));
-    *len = &view_len;
-    *editable = false;
-    return view;
+    gui_confirm(ICON_WARNING, "Notepad",
+                "You have unsaved changes. If you open another document, your changes will be lost.",
+                discard_and_load, (void *)(intptr_t)node);
 }
 
 void notepad_open_file(int node)
 {
+    gui_open(&notepad_window);
+    load_asking(node);
+}
+
+/* ---- saving ---- */
+
+static void write_to(int node)
+{
+    int err = fs_write(node, text, text_len, false);
+    if (err < 0) {
+        char msg[96];
+        ksnprintf(msg, sizeof(msg), "Couldn't save %s: %s.", fs_node(node)->name, fs_error(err));
+        gui_message(ICON_FAIL, "Notepad", msg);
+        return;
+    }
     file = node;
     file_id = fs_node(node)->id;
-    follow = fs_editable(node);
-    sb.offset = 0;
-    ksnprintf(notepad_window.title, sizeof(notepad_window.title), "Notepad - %s%s",
-              fs_node(node)->name, fs_editable(node) ? "" : " (read-only)");
-    gui_open(&notepad_window);
+    dirty = false;
+    update_title();
 }
+
+static void replace_yes(void *ctx)
+{
+    write_to((int)(intptr_t)ctx);
+}
+
+static int home_folder(void)
+{
+    int home = fs_resolve(FS_ROOT, FS_HOME);
+    return home >= 0 ? home : FS_ROOT;
+}
+
+static void save_as_named(const char *name, void *ctx)
+{
+    (void)ctx;
+    char msg[128];
+    int n = fs_resolve(home_folder(), name);
+
+    if (n >= 0 && fs_node(n)->is_dir) {
+        ksnprintf(msg, sizeof(msg), "%s is a folder. Pick a file name instead.", name);
+        gui_message(ICON_FAIL, "Notepad", msg);
+    } else if (n >= 0) {
+        ksnprintf(msg, sizeof(msg), "%s already exists. Do you want to replace it?", fs_node(n)->name);
+        gui_confirm(ICON_QUESTION, "Save As", msg, replace_yes, (void *)(intptr_t)n);
+    } else if ((n = fs_create(home_folder(), name, false)) < 0) {
+        ksnprintf(msg, sizeof(msg), "Couldn't create %s: %s.", name, fs_error(n));
+        gui_message(ICON_FAIL, "Notepad", msg);
+    } else {
+        write_to(n);
+    }
+}
+
+static void save_as(void)
+{
+    gui_prompt("Save As", "Save the document as:", has_file() ? fs_node(file)->name : "untitled.txt",
+               save_as_named, 0);
+}
+
+static void save(void)
+{
+    if (has_file() && fs_editable(file))
+        write_to(file);
+    else
+        save_as();
+}
+
+/* ---- closing ---- */
+
+static void close_anyway(void *ctx)
+{
+    (void)ctx;
+    dirty = false;
+    gui_close(&notepad_window);
+}
+
+static bool can_close(struct window *win)
+{
+    (void)win;
+    if (!dirty)
+        return true;
+    gui_confirm(ICON_WARNING, "Notepad",
+                "You have unsaved changes. If you close this window, your changes will be lost.",
+                close_anyway, 0);
+    return false;
+}
+
+/* ---- drawing ---- */
 
 /*
  * text wraps at the edge of the window. this walks through it once, calling
  * each() for every character with the row and column it ends up on, and hands
  * back the row and column just past the end, which is where the caret goes.
  */
-static void layout(const char *text, int len, int cols,
-                   void (*each)(int row, int col, char c, void *ctx), void *ctx,
+static void layout(int cols, void (*each)(int row, int col, char c, void *ctx), void *ctx,
                    int *end_row, int *end_col)
 {
     int row = 0, col = 0;
-    for (int i = 0; i < len; i++) {
+    for (int i = 0; i < text_len; i++) {
         if (text[i] == '\n' || col == cols) {
             row++;
             col = 0;
@@ -123,44 +246,49 @@ static void draw_char(int row, int col, char c, void *p)
 }
 
 /*
- * draws notepad: the text in a white box (grey if it can't be edited) with
- * the caret on the end, and the scrollbar. it lays the text out once first
- * just to count the rows, so the scrollbar knows how tall everything is, then
- * again to actually draw the rows that are showing.
+ * draws notepad: the toolbar, then the text in a white box with the caret on
+ * the end. it lays the text out once first just to count the rows, so the
+ * scrollbar knows how tall everything is, then again to actually draw the
+ * rows that are showing.
  */
 static void draw(struct window *win, int cx, int cy, int cw, int ch)
 {
     (void)win;
-    int *len;
-    bool editable;
-    char *text = contents(&len, &editable);
+    has_file();
+    update_title();
 
-    int tw = cw - SCROLLBAR_W;
-    gfx_fill(cx, cy, tw, ch, editable ? C_WHITE : 0xF4F4F4);
-    gfx_bevel(cx, cy, tw, ch, false);
+    for (int i = 0; i < BTN_COUNT; i++)
+        ui_button(cx + buttons[i].x, cy + 2, buttons[i].w, BUTTON_H, buttons[i].label, false);
 
-    int cols = (tw - 8) / FONT_W, rows = (ch - 8) / FONT_H;
+    int ty = cy + TOOLBAR_H, th = ch - TOOLBAR_H, tw = cw - SCROLLBAR_W;
+    gfx_fill(cx, ty, tw, th, C_WHITE);
+    gfx_bevel(cx, ty, tw, th, false);
+
+    int cols = (tw - 8) / FONT_W, rows = (th - 8) / FONT_H;
     if (cols < 1)
         cols = 1;
     if (rows < 1)
         rows = 1;
 
     int end_row, end_col;
-    layout(text, *len, cols, 0, 0, &end_row, &end_col);
+    layout(cols, 0, 0, &end_row, &end_col);
     sb.total = end_row + 1;
     sb.visible = rows;
     if (follow)
         sb.offset = ui_scroll_max(&sb);
     ui_scroll_by(&sb, 0);
 
-    struct draw_ctx d = { cx + 4, cy + 4, sb.offset, rows };
-    layout(text, *len, cols, draw_char, &d, &end_row, &end_col);
+    struct draw_ctx d = { cx + 4, ty + 4, sb.offset, rows };
+    gfx_clip(cx + 2, ty + 2, tw - 4, th - 4);
+    layout(cols, draw_char, &d, &end_row, &end_col);
+    if (end_row >= sb.offset && end_row < sb.offset + rows)
+        gfx_fill(cx + 4 + end_col * FONT_W, ty + 5 + (end_row - sb.offset) * FONT_H, 1, FONT_H - 2, C_BLACK);
+    gfx_clip(cx, cy, cw, ch);
 
-    if (editable && end_row >= sb.offset && end_row < sb.offset + rows)
-        gfx_fill(cx + 4 + end_col * FONT_W, cy + 5 + (end_row - sb.offset) * FONT_H, 1, FONT_H - 2, C_BLACK);
-
-    ui_scrollbar(cx + tw, cy, ch, &sb);
+    ui_scrollbar(cx + tw, ty, th, &sb);
 }
+
+/* ---- input ---- */
 
 static void update_follow(void)
 {
@@ -169,8 +297,8 @@ static void update_follow(void)
 
 /*
  * typing. the scrolling keys scroll, backspace rubs out the last letter, and
- * enter or anything printable goes on the end, straight into the file if it's
- * one that can be edited. the view jumps back down to the caret.
+ * enter or anything printable goes on the end. any change marks the document
+ * as unsaved and jumps the view back down to the caret.
  */
 static bool key(struct window *win, char c)
 {
@@ -180,35 +308,48 @@ static bool key(struct window *win, char c)
         return true;
     }
 
-    int *len;
-    bool editable;
-    char *text = contents(&len, &editable);
-    if (!editable)
-        return false;
-
     if (c == '\b') {
-        if (*len == 0)
+        if (text_len == 0)
             return false;
-        (*len)--;
-    } else if ((c == '\n' || (c >= ' ' && c <= '~')) && *len < FS_FILE_MAX) {
-        text[(*len)++] = c;
+        text_len--;
+    } else if ((c == '\n' || (c >= ' ' && c <= '~')) && text_len < NOTE_MAX) {
+        text[text_len++] = c;
     } else {
         return false;
     }
+    dirty = true;
     follow = true;
+    update_title();
     return true;
 }
 
 /*
- * a click on the scrollbar. clicks on the text itself don't do anything,
- * since the caret always lives at the end.
+ * a click: one of the toolbar buttons (new, save or save as), or the
+ * scrollbar. clicks on the text itself don't do anything, since the caret
+ * always lives at the end.
  */
 static bool click(struct window *win, int x, int y, bool double_click)
 {
     (void)double_click;
-    if (x < win->cw - SCROLLBAR_W)
+    sb.grab = -1;
+
+    if (y >= 2 && y < 2 + BUTTON_H) {
+        for (int i = 0; i < BTN_COUNT; i++) {
+            if (x < buttons[i].x || x >= buttons[i].x + buttons[i].w)
+                continue;
+            if (i == BTN_NEW)
+                load_asking(-1);
+            else if (i == BTN_SAVE)
+                save();
+            else
+                save_as();
+        }
+        return true;
+    }
+
+    if (y < TOOLBAR_H || x < win->cw - SCROLLBAR_W)
         return false;
-    ui_scrollbar_click(&sb, y, win->ch);
+    ui_scrollbar_click(&sb, y - TOOLBAR_H, win->ch - TOOLBAR_H);
     update_follow();
     return true;
 }
@@ -216,7 +357,7 @@ static bool click(struct window *win, int x, int y, bool double_click)
 static bool drag(struct window *win, int x, int y)
 {
     (void)x;
-    if (!ui_scrollbar_drag(&sb, y, win->ch))
+    if (!ui_scrollbar_drag(&sb, y - TOOLBAR_H, win->ch - TOOLBAR_H))
         return false;
     update_follow();
     return true;

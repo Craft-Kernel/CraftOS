@@ -31,7 +31,7 @@ build/%.S.o: src/%.S | build
 
 # the images are pulled in by assets.S, so it rebuilds when they change.
 # remake them from the pngs with tools/img2cimg.py (see the readme).
-build/assets.S.o: $(wildcard assets/*.cimg)
+build/assets.S.o: $(wildcard assets/*.cimg) $(wildcard assets/*.cfnt)
 
 build:
 	mkdir -p build

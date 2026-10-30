@@ -1,6 +1,8 @@
 #include <console.h>
 #include <cpu.h>
 #include <fs.h>
+#include <net.h>
+#include <pci.h>
 #include <string.h>
 #include <sysfiles.h>
 #include <task.h>
@@ -48,11 +50,28 @@ STATUS_SIZES(fail)
 #undef STATUS_ICON
 #undef STATUS_SIZES
 
+extern const char asset_sans_12[], asset_sans_12_end[];
+extern const char asset_sans_bold_12[], asset_sans_bold_12_end[];
+extern const char asset_sol_cards[], asset_sol_cards_end[], asset_sol_extras[], asset_sol_extras_end[];
+
+/*
+ * the app icons, each at 16, 28, 32 and 48 pixels, plus the white start cube
+ * at 16 and 22.
+ */
+#define APP_ICON(n, s) extern const char asset_app_##n##_##s[], asset_app_##n##_##s##_end[];
+#define APP_SIZES(n) APP_ICON(n, 16) APP_ICON(n, 28) APP_ICON(n, 32) APP_ICON(n, 48)
+#define APP_LIST APP_SIZES(files) APP_SIZES(term) APP_SIZES(tasks) APP_SIZES(settings) \
+                 APP_SIZES(notes) APP_SIZES(photos) \
+                 APP_SIZES(mines) APP_SIZES(trash) APP_SIZES(solitaire) \
+                 APP_ICON(start, 16) APP_ICON(start, 22)
+APP_LIST
+#undef APP_ICON
+
 /* ---- live files ---- */
 
 static int gen_version(char *buf, int size)
 {
-    return ksnprintf(buf, size, "%s %s (%s) i686, %s\n", OS_NAME, OS_VERSION, KERNEL_NAME, RELEASE);
+    return ksnprintf(buf, size, "%s %s (%s) i686\n", OS_NAME, OS_VERSION, KERNEL_NAME);
 }
 
 static int gen_uptime(char *buf, int size)
@@ -150,6 +169,16 @@ static int gen_boot_log(char *buf, int size)
     return len;
 }
 
+static int gen_net(char *buf, int size)
+{
+    return net_describe(buf, size);
+}
+
+static int gen_pci(char *buf, int size)
+{
+    return pci_describe(buf, size);
+}
+
 static int gen_kernel_info(char *buf, int size)
 {
     return ksnprintf(buf, size,
@@ -177,6 +206,9 @@ void sysfiles_init(uint32_t mem_upper_kib)
     fs_add_dir("/home", true);
     fs_add_dir("/home/crafter", false);
     fs_add_dir("/home/crafter/projects", false);
+    fs_add_dir("/home/crafter/Desktop", false);
+    fs_add_dir("/home/crafter/Desktop/Stuff", false);
+    fs_add_dir("/home/crafter/.trash", false);
     fs_add_dir("/proc", true);
     fs_add_dir("/tmp", false);
     fs_add_dir("/usr", true);
@@ -216,9 +248,16 @@ void sysfiles_init(uint32_t mem_upper_kib)
                 "etc, proc and the other folders you'd expect. Most of it is\n"
                 "read-only, but /etc, /tmp and your home folder are yours.\n",
                 false);
+    fs_add_file(FS_HOME "/Desktop/drag me.txt",
+                "Everything in ~/Desktop shows up on the desktop.\n"
+                "\n"
+                "Try dragging this file: onto the Stuff folder to move it\n"
+                "inside, onto the Recycle Bin to throw it away, or into a\n"
+                "Files window. Files you drag out of the file manager onto\n"
+                "the desktop land in ~/Desktop. Escape cancels a drag.\n",
+                false);
     fs_add_file(FS_HOME "/notes.txt",
                 "Ideas for CraftOS:\n"
-                "- a paint program\n"
                 "- saving files to a real disk\n"
                 "- a few small games\n",
                 false);
@@ -228,6 +267,8 @@ void sysfiles_init(uint32_t mem_upper_kib)
     fs_add_live("/proc/meminfo", gen_meminfo);
     fs_add_live("/proc/cpuinfo", gen_cpuinfo);
     fs_add_live("/proc/tasks", gen_tasks);
+    fs_add_live("/proc/net", gen_net);
+    fs_add_live("/proc/pci", gen_pci);
 
     fs_add_file("/usr/share/doc/keys.txt",
                 "Keys and mouse\n"
@@ -249,13 +290,18 @@ void sysfiles_init(uint32_t mem_upper_kib)
                 "/dev     devices (null, clock, mouse)\n"
                 "/etc     settings you can edit\n"
                 "/home    home folders\n"
-                "/proc    live system info\n"
+                "/proc    live system info (tasks, net, pci)\n"
                 "/tmp     scratch space\n"
                 "/usr     shared docs, the wallpaper and icons\n"
                 "/var     logs\n",
                 true);
 
     fs_add_live("/var/log/boot.log", gen_boot_log);
+
+    /* solitaire's card sheets (see tools/make-solitaire-cards.sh) */
+    fs_add_dir("/usr/share/solitaire", true);
+    fs_add_blob("/usr/share/solitaire/cards.cimg", asset_sol_cards, asset_sol_cards_end - asset_sol_cards);
+    fs_add_blob("/usr/share/solitaire/extras.cimg", asset_sol_extras, asset_sol_extras_end - asset_sol_extras);
 
     fs_add_dir("/usr/share/wallpapers", true);
     fs_add_dir("/usr/share/icons", true);
@@ -277,4 +323,17 @@ void sysfiles_init(uint32_t mem_upper_kib)
     STATUS_SIZES(fail)
 #undef STATUS_ICON
 #undef STATUS_SIZES
+
+    /*
+     * the app icons, from the craftos app icons design:
+     * /usr/share/icons/apps/files-48.cimg and so on
+     */
+    fs_add_dir("/usr/share/icons/apps", true);
+#define APP_ICON(n, s)     fs_add_blob("/usr/share/icons/apps/" #n "-" #s ".cimg", asset_app_##n##_##s, asset_app_##n##_##s##_end - asset_app_##n##_##s);
+    APP_LIST
+#undef APP_ICON
+
+    fs_add_dir("/usr/share/fonts", true);
+    fs_add_blob("/usr/share/fonts/sans-12.cfnt", asset_sans_12, asset_sans_12_end - asset_sans_12);
+    fs_add_blob("/usr/share/fonts/sans-bold-12.cfnt", asset_sans_bold_12, asset_sans_bold_12_end - asset_sans_bold_12);
 }

@@ -32,7 +32,7 @@ static bool drag(struct window *win, int x, int y);
 static bool scroll(struct window *win, int rows);
 
 struct window taskman_window = {
-    .title = "Task Manager", .proc = "taskman", .x = 110, .y = 50, .w = 500, .h = 320,
+    .title = "Task Manager", .proc = "taskman", .icon = "tasks", .x = 110, .y = 50, .w = 500, .h = 320,
     .min_w = 490, .min_h = 200, .resizable = true,
     .draw = draw, .key = key, .click = click, .drag = drag, .scroll = scroll,
 };
@@ -94,7 +94,7 @@ static void draw(struct window *win, int cx, int cy, int cw, int ch)
         int w = (i + 1 < COLUMN_COUNT ? columns[i + 1].x : lw) - columns[i].x;
         gfx_fill(x, cy, w, HEADER_H, C_FACE);
         gfx_bevel(x, cy, w, HEADER_H, true);
-        gfx_text(x + 5, cy + 1, columns[i].label, C_BLACK);
+        ui_text_bold(x + 5, cy + 1, columns[i].label, C_BLACK);
     }
 
     gfx_fill(cx, ly, lw, lh, C_WHITE);
@@ -118,18 +118,18 @@ static void draw(struct window *win, int cx, int cy, int cw, int ch)
             gfx_fill(cx + 2, ry, lw - 4, ROW_H, C_SELECT);
 
         ksnprintf(buf, sizeof(buf), "%d", t->pid);
-        gfx_text(cx + columns[0].x + 5, ry + 1, buf, text);
-        gfx_text(cx + columns[1].x + 5, ry + 1, t->name, text);
-        gfx_text(cx + columns[2].x + 5, ry + 1, task_state_name(t), text);
+        ui_text(cx + columns[0].x + 5, ry + 1, buf, text);
+        ui_text(cx + columns[1].x + 5, ry + 1, t->name, text);
+        ui_text(cx + columns[2].x + 5, ry + 1, task_state_name(t), text);
 
         if (t->kind == TASK_THREAD) {
             ksnprintf(buf, sizeof(buf), "%3u%%", t->cpu_percent);
-            gfx_text(cx + columns[3].x + 5, ry + 1, buf, text);
+            ui_text(cx + columns[3].x + 5, ry + 1, buf, text);
             uint32_t secs = t->ticks / hz;
             ksnprintf(buf, sizeof(buf), "%u:%02u", secs / 60, secs % 60);
-            gfx_text(cx + columns[4].x + 5, ry + 1, buf, text);
+            ui_text(cx + columns[4].x + 5, ry + 1, buf, text);
         }
-        gfx_text(cx + columns[5].x + 5, ry + 1, t->info, text);
+        ui_text_fit(cx + columns[5].x + 5, ry + 1, t->info, lw - columns[5].x - 9, text, false);
     }
     gfx_clip(cx, cy, cw, ch);
 
@@ -138,7 +138,7 @@ static void draw(struct window *win, int cx, int cy, int cw, int ch)
     int by = cy + ch - BOTTOM_H;
     for (int i = 0; i < BUTTON_COUNT; i++)
         ui_button(cx + buttons[i].x, by, buttons[i].w, BUTTON_H, buttons[i].label, false);
-    gfx_text(cx + 238, by + 3, "Start:", C_BLACK);
+    ui_text(cx + 238, by + 3, "Start:", C_BLACK);
 
     /* the idle task's share is whatever cpu nobody else wanted */
     uint32_t idle = 0;
@@ -152,7 +152,7 @@ static void draw(struct window *win, int cx, int cy, int cw, int ch)
         ksnprintf(info, sizeof(info), "%d tasks    CPU in use: %u%%", count, idle > 100 ? 0 : 100 - idle);
     int sy = cy + ch - STATUS_H;
     gfx_bevel(cx, sy, cw, STATUS_H, false);
-    gfx_textn(cx + 6, sy + 2, info, (cw - 12) / FONT_W, C_BLACK);
+    ui_text_fit(cx + 6, sy + 2, info, cw - 12, C_BLACK, false);
 }
 
 static void act_on_selected(int (*action)(int pid), const char *done)

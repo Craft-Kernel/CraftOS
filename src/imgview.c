@@ -29,7 +29,7 @@ static char status[64];
 static void draw(struct window *win, int cx, int cy, int cw, int ch);
 
 struct window imgview_window = {
-    .title = "Image Viewer", .proc = "imgview", .x = 90, .y = 40, .w = 460, .h = 380,
+    .title = "Image Viewer", .proc = "imgview", .icon = "photos", .x = 90, .y = 40, .w = 460, .h = 380,
     .min_w = 200, .min_h = 160, .resizable = true, .draw = draw,
 };
 
@@ -106,5 +106,5 @@ static void draw(struct window *win, int cx, int cy, int cw, int ch)
 
     int sy = cy + ch - STATUS_H;
     gfx_bevel(cx, sy, cw, STATUS_H, false);
-    gfx_textn(cx + 6, sy + 2, status, (cw - 12) / FONT_W, C_BLACK);
+    ui_text_fit(cx + 6, sy + 2, status, cw - 12, C_BLACK, false);
 }

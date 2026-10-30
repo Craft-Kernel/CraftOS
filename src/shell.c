@@ -3,6 +3,7 @@
 #include <cpu.h>
 #include <fs.h>
 #include <gui.h>
+#include <heap.h>
 #include <http.h>
 #include <io.h>
 #include <net.h>
@@ -11,6 +12,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <task.h>
+#include <trash.h>
 #include <version.h>
 
 /*
@@ -334,6 +336,20 @@ static void cmd_view(struct shell *sh, int argc, char **argv, char *rest)
         imgview_open(n);
 }
 
+static void cmd_mines(struct shell *sh, int argc, char **argv, char *rest)
+{
+    (void)argc, (void)argv, (void)rest;
+    if (!needs_desktop(sh, "mines"))
+        gui_open(&mines_window);
+}
+
+static void cmd_solitaire(struct shell *sh, int argc, char **argv, char *rest)
+{
+    (void)argc, (void)argv, (void)rest;
+    if (!needs_desktop(sh, "solitaire"))
+        gui_open(&solitaire_window);
+}
+
 static void cmd_taskman(struct shell *sh, int argc, char **argv, char *rest)
 {
     (void)argc, (void)argv, (void)rest;
@@ -584,10 +600,6 @@ static void cmd_shutdown(struct shell *sh, int argc, char **argv, char *rest)
     shprintf(sh, "CraftOS has shut down. You can turn off your computer now.\n");
     halt_forever();
 }
-
-/* ---- the command table ---- */
-
-static void cmd_help(struct shell *sh, int argc, char **argv, char *rest);
 
 /* ---- network ---- */
 
@@ -841,19 +853,29 @@ static void cmd_wget(struct shell *sh, int argc, char **argv, char *rest)
         run_slow(sh, "wget", do_wget, argc, argv);
 }
 
-static void open_app(struct shell *sh, const char *cmd, struct window *win)
+static void cmd_trash(struct shell *sh, int argc, char **argv, char *rest)
 {
-    if (!needs_desktop(sh, cmd))
-        gui_open(win);
-}
-
-static void cmd_mines(struct shell *sh, int argc, char **argv, char *rest)
-{
-    (void)argc, (void)argv, (void)rest;
-    open_app(sh, "mines", &mines_window);
+    (void)rest;
+    if (argc < 2) {
+        shprintf(sh, "usage: trash PATH...  (empty it with 'trash --empty')\n");
+        return;
+    }
+    if (!strcmp(argv[1], "--empty")) {
+        int n = trash_empty();
+        shprintf(sh, "Emptied the Recycle Bin (%d item%s)\n", n, n == 1 ? "" : "s");
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        int n = fs_resolve(sh->cwd, argv[i]);
+        int err = n < 0 ? n : trash_put(n);
+        if (err < 0)
+            fail(sh, "trash", argv[i], err);
+    }
 }
 
 /* ---- the command table ---- */
+
+static void cmd_help(struct shell *sh, int argc, char **argv, char *rest);
 
 static const struct {
     const char *name;
@@ -872,8 +894,8 @@ static const struct {
     { "files", "files [PATH]  open the file manager (desktop)", cmd_files },
     { "free", "free  memory and ram disk use", cmd_free },
     { "help", "help  list the commands in /bin", cmd_help },
+    { "host", "host NAME  look up a name's address (dns)", cmd_host },
     { "hostname", "hostname [NAME]  show or set the machine name", cmd_hostname },
-    { "host", "host NAME  look a name up in dns", cmd_host },
     { "ifconfig", "ifconfig  network card and address", cmd_ifconfig },
     { "kill", "kill PID|NAME...  end tasks", cmd_kill },
     { "ls", "ls [PATH]  list a folder", cmd_ls },
@@ -881,7 +903,7 @@ static const struct {
     { "mkdir", "mkdir NAME...  make folders", cmd_mkdir },
     { "mv", "mv FROM TO  move or rename", cmd_mv },
     { "pause", "pause PID|NAME...  stop tasks from running for now", cmd_pause },
-    { "ping", "ping HOST [COUNT]  send pings", cmd_ping },
+    { "ping", "ping HOST [COUNT]  check that a machine answers", cmd_ping },
     { "ps", "ps  list tasks", cmd_ps },
     { "pwd", "pwd  show the current folder", cmd_pwd },
     { "reboot", "reboot  restart the machine", cmd_reboot },
@@ -889,8 +911,10 @@ static const struct {
     { "rm", "rm PATH...  delete files or empty folders", cmd_rm },
     { "shutdown", "shutdown  turn the machine off", cmd_shutdown },
     { "sleep", "sleep SECONDS  wait (text mode)", cmd_sleep },
+    { "solitaire", "solitaire  play solitaire (desktop)", cmd_solitaire },
     { "taskman", "taskman  open the task manager (desktop)", cmd_taskman },
     { "touch", "touch NAME...  make empty files", cmd_touch },
+    { "trash", "trash PATH...  move to the Recycle Bin (--empty empties it)", cmd_trash },
     { "ui", "ui [exit]  start the desktop, or leave it", cmd_ui },
     { "uname", "uname  system name and version", cmd_uname },
     { "uptime", "uptime  time since boot", cmd_uptime },

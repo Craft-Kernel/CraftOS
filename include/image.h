@@ -17,3 +17,6 @@ struct image {
  */
 struct image *image_load(const char *path);
 struct image *image_decode(const uint8_t *data, int size);
+
+/* gives a decoded picture's memory back. */
+void image_free(struct image *img);

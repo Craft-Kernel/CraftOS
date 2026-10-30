@@ -79,3 +79,11 @@ struct image *image_load(const char *path)
     const uint8_t *data = fs_blob(n, &size);
     return data ? image_decode(data, size) : 0;
 }
+
+void image_free(struct image *img)
+{
+    if (!img)
+        return;
+    kfree(img->pixels);
+    kfree(img);
+}

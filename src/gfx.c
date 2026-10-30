@@ -1,3 +1,4 @@
+#include <font.h>
 #include <gfx.h>
 #include <image.h>
 #include <io.h>
@@ -257,6 +258,28 @@ void gfx_fill(int x, int y, int w, int h, uint32_t color)
     }
 }
 
+static uint32_t blend(uint32_t under, uint32_t over);
+
+/*
+ * like gfx_fill, but the colour carries an alpha in its top byte, so it's
+ * mixed over whatever's already there instead of covering it. that's how the
+ * glassy taskbar lets the wallpaper show through.
+ */
+void gfx_fill_alpha(int x, int y, int w, int h, uint32_t argb)
+{
+    int x1 = x + w, y1 = y + h;
+    if (x < clip_x0) x = clip_x0;
+    if (y < clip_y0) y = clip_y0;
+    if (x1 > clip_x1) x1 = clip_x1;
+    if (y1 > clip_y1) y1 = clip_y1;
+
+    for (int py = y; py < y1; py++) {
+        uint32_t *row = back + py * GFX_WIDTH;
+        for (int px = x; px < x1; px++)
+            row[px] = blend(row[px], argb);
+    }
+}
+
 void gfx_rect(int x, int y, int w, int h, uint32_t color)
 {
     gfx_fill(x, y, w, 1, color);
@@ -361,6 +384,47 @@ void gfx_blit_scaled(int x, int y, int w, int h, const struct image *img)
         for (int px = x0; px < x1; px++)
             dst[px] = blend(dst[px], src[(px - x) * img->width / w]);
     }
+}
+
+/*
+ * smooth text. each letter is a little grid of coverage values (0 to 255)
+ * saying how much of each pixel the letter covers, and that's how much of the
+ * text colour gets mixed into the pixel underneath, the same way pictures use
+ * their alpha.
+ */
+int gfx_font_text(const struct font *f, int x, int y, const char *s, int max_w, uint32_t color)
+{
+    int start = x;
+    color &= 0xFFFFFF;
+    for (; *s; s++) {
+        const struct font_glyph *g = font_glyph(f, *s);
+        if (max_w > 0 && x + g->advance - start > max_w)
+            break;
+        const uint8_t *cov = f->coverage + g->offset;
+        int gx0 = x + g->left;
+        for (int row = 0; row < f->height; row++) {
+            int py = y + row;
+            if (py < clip_y0 || py >= clip_y1)
+                continue;
+            uint32_t *dst = back + py * GFX_WIDTH;
+            for (int col = 0; col < g->width; col++) {
+                int px = gx0 + col;
+                uint8_t a = cov[row * g->width + col];
+                if (a && px >= clip_x0 && px < clip_x1)
+                    dst[px] = blend(dst[px], (uint32_t)a << 24 | color);
+            }
+        }
+        x += g->advance;
+    }
+    return x - start;
+}
+
+int gfx_font_width(const struct font *f, const char *s)
+{
+    int w = 0;
+    for (; *s; s++)
+        w += font_glyph(f, *s)->advance;
+    return w;
 }
 
 /*

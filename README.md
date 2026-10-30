@@ -1,9 +1,17 @@
-# CraftOS (Craft Release 1)
+# CraftOS (Craft Release 2)
 
-CraftOS with the first version of its desktop: grey beveled windows and buttons, navy title bars,
-a grey taskbar, and the VGA text font. It has the original apps plus Minesweeper, and plain HTTP
-networking in the shell. There's no web browser (no HTML, CSS or JavaScript) and no HTTPS. The
-kernel on its own is next to it in `../Craft Kernel`.
+CraftOS with the new glossy desktop: green glass title bars, a see-through taskbar with a round
+Start orb, app icons, and smooth DejaVu Sans text. On top of Craft Release 1 it adds four things:
+
+- the glossy look
+- saving in Notepad (New, Save and Save As)
+- the Recycle Bin, with drag and drop for files
+- Solitaire
+
+Everything else is as it was in Release 1: the original apps plus Minesweeper, and plain HTTP
+networking in the shell. There's no web browser (no HTML, CSS or JavaScript), no HTTPS, and none
+of the other apps from newer versions of CraftOS. The kernel on its own is next to it in
+`../Craft Kernel`.
 
 CraftOS runs on the Craft Kernel, a hobby x86 (32-bit) kernel written from scratch in C with a
 little assembly. It boots through Multiboot, so QEMU can load it directly without a disk image.
@@ -13,11 +21,17 @@ the style of mid-90s operating systems , and use Start > Text Mode (or `ui exit`
 terminal) to come back. Underneath both is a preemptive multitasking kernel with a task
 manager, and a RAM disk laid out like a Linux system, the CraftOS way.
 
-![The desktop](screenshot-desktop.png)
+![The desktop](screenies/screenshot-desktop.png)
 
-![Minesweeper](screenshot-mines.png)
+![The Start menu](screenies/screenshot-start-menu.png)
 
-![The network commands in the terminal](screenshot-network.png)
+![Solitaire](screenies/screenshot-solitaire.png)
+
+![The Recycle Bin](screenies/screenshot-recycle-bin.png)
+
+![Minesweeper](screenies/screenshot-mines.png)
+
+![The network commands in the terminal](screenies/screenshot-network.png)
 
 ## What it does
 
@@ -30,7 +44,7 @@ manager, and a RAM disk laid out like a Linux system, the CraftOS way.
   (ARP, ICMP, UDP, DHCP at boot, DNS and TCP), with an HTTP/1.1 client for plain `http://`
 - A shell that runs both on the text console and in the desktop's Terminal app. Commands
   live in `/bin`, so `help` lists that folder:
-  - files: `ls`, `cd`, `pwd`, `cat`, `echo ... > file`, `mkdir`, `touch`, `rm`, `mv`
+  - files: `ls`, `cd`, `pwd`, `cat`, `echo ... > file`, `mkdir`, `touch`, `rm`, `mv`, `trash`
   - tasks: `ps`, `kill`, `pause`, `resume`, `sleep`, `taskman`, plus the background programs
     `spin`, `primes` and `ticker`
   - system: `ui`, `uname`, `whoami`, `hostname`, `date`, `uptime`, `free`, `clear`, `crash`,
@@ -38,25 +52,45 @@ manager, and a RAM disk laid out like a Linux system, the CraftOS way.
   - network: `ifconfig`, `dhcp`, `ping`, `host` (DNS lookup) and `wget` (saves an `http://`
     page to a file). In the desktop's Terminal these run as a background job, so the desktop
     keeps going while they wait
-  - desktop only: `edit`, `files`, `view`, `mines`, `exit`
+  - desktop only: `edit`, `files`, `view`, `mines`, `solitaire`, `exit`
 - 640x480 32-bit graphics through the Bochs VGA interface, double-buffered and clipped, and a
   clean switch back to 80x25 text mode (VGA registers and font restored)
 - A desktop with:
-  - icons that open windows on double-click
+  - a grid of 48 px app icons that open windows on double-click, followed by the files in
+    `~/Desktop`, which open the same way
+  - drag and drop for files: pick up a file on the desktop or in Files and drop it on a folder
+    to move it inside, on a Files window to move it into the folder it's showing, on the empty
+    desktop to move it to `~/Desktop`, or on the Recycle Bin icon or window to bin it. A chip
+    next to the pointer shows the file and what letting go will do, and Escape cancels
   - windows you can drag, resize from the right or bottom edge (or the corner), minimize to
     the taskbar, maximize (button or double-click the title bar) and close
   - F11 full screen for the focused window, covering the taskbar
   - scrollbars with arrow buttons, page clicks and a draggable thumb, plus the mouse wheel and
     the Up, Down, PgUp and PgDn keys
-  - a taskbar with a Start menu, one button per open window, and a clock
-  - Text Mode, Restart, and Shut Down, which powers off QEMU, Bochs and VirtualBox
+  - a glassy see-through taskbar with a round Start orb, pinned Files, Terminal, System and
+    Minesweeper buttons (a green light under one means it's running), one button per open
+    window, and a clock
+  - a Start menu listing every app with its icon, then Text Mode, Restart, and Shut Down, which
+    powers off QEMU, Bochs and VirtualBox
 - Apps:
   - **Task Manager** (Ctrl+Alt+Del): every task with its PID, state, CPU use, CPU time and
     status, and buttons to end, pause or resume one, or start a background program
   - **Terminal**: the shell, with a `crafter@craftbox:~$` prompt and scrollback
-  - **Files**: browse folders, make new folders and files, delete, and double-click to open
-  - **Notepad**: edits RAM disk files directly, so changes are saved as you type; read-only
-    and live files open as a view
+  - **Files**: browse folders, make new folders and files, delete (to the Recycle Bin),
+    double-click to open, and drag files onto folders, other windows, the desktop or the
+    Recycle Bin
+  - **Notepad**: edits a copy of a file with New, Save and Save As (a star in the title means
+    unsaved changes), and asks before closing or opening something else over unsaved work
+  - **Recycle Bin**: deleting in Files, dragging onto the bin (its desktop icon or its window),
+    or `trash` in the shell moves things to `~/.trash`; the Recycle Bin lists them with where
+    they came from, and can restore them, delete them for good, or empty the bin (both ask
+    first)
+  - **Solitaire**: Klondike, with the cards, backs and table from the CraftOS Solitaire design.
+    Drag cards between piles, click the deck to deal one or three at a time, double-click a card
+    to send it to its foundation, and right-click to send up everything that can go. Once every
+    card is face up the rest play themselves, and a win ends with the bouncing-card cascade. The
+    Game menu has New Game (N), Undo (U or Backspace), draw one or three, and a green or blue
+    card back, with Windows-style scoring and a timer
   - **Minesweeper**: Beginner (9x9) and Intermediate (16x16), a safe first click, right-click
     flags, double-click a number to clear around it, a mine counter, a timer and a face to restart
   - **Image Viewer**, **System** (memory, uptime) and **Welcome**
@@ -65,8 +99,14 @@ manager, and a RAM disk laid out like a Linux system, the CraftOS way.
   files of any size, like images)
 - Status icons (info, question, warning, fail) in dialogs: the kernel task warning, Restart and
   Shut Down confirmations, and error messages from Files, the Task Manager and the Image Viewer
-- Images: the CraftOS wallpaper, the Craft cube icon and the status icons are built into the
-  kernel as `.cimg` files under `/usr/share`, decoded at runtime and drawn with alpha blending
+- A look based on the CraftOS Status Icons and App Icons designs: glossy green title bars with a
+  red close button, cream window bodies, rounded buttons, and app icons on the desktop, title
+  bars, taskbar and Start menu
+- Smooth, proportional UI text in DejaVu Sans (12 px, regular and bold); the Terminal and Notepad
+  keep the fixed-width VGA font
+- Images: the CraftOS wallpaper, the Craft cube icon, the status icons, the app icons and the
+  Solitaire cards are built into the kernel as `.cimg` files under `/usr/share`, decoded at
+  runtime and drawn with alpha blending
 - If the desktop crashes, the exception handler switches back to text mode to show the panic
 
 ## The network
@@ -121,10 +161,13 @@ fetched with `wget 10.0.2.2:8000`.
 | `/boot`          | `craft-kernel.info`: where the running kernel was loaded and its size |
 | `/dev`           | `null` (swallows writes), plus live `clock` and `mouse`              |
 | `/etc`           | `hostname` (edit it to rename the machine), `motd`, `os-release`      |
-| `/home/crafter`  | Your home folder, `~`: `readme.txt`, `notes.txt`, `projects/`        |
+| `/home/crafter`  | Your home folder, `~`: `readme.txt`, `notes.txt`, `projects/`, `Desktop/` (shown on the desktop) and `.trash/` (the Recycle Bin) |
 | `/proc`          | Live `version`, `uptime`, `meminfo`, `cpuinfo` and `tasks`            |
 | `/tmp`           | Scratch space (`ticker` writes its log here)                          |
 | `/usr/share/doc` | `keys.txt` and `layout.txt`                                           |
+| `/usr/share/fonts` | The UI font, `sans-12.cfnt` and `sans-bold-12.cfnt`                 |
+| `/usr/share/icons` | The Craft cube, and the status and app icons                        |
+| `/usr/share/solitaire` | Solitaire's card sheets: `cards.cimg` (the 52 faces) and `extras.cimg` (backs and empty slots) |
 | `/var/log`       | `boot.log`, the real messages from this boot                          |
 
 Everything outside `/home/crafter`, `/etc`, `/tmp` and `/var` is read-only. It all lives in
@@ -140,6 +183,18 @@ convert it again and rebuild:
 python tools/img2cimg.py "../../../Craft Assets/CraftOS Wallpaper.png" assets/wallpaper.cimg --size 640x480 --fit cover --format rgb
 python tools/img2cimg.py "../../../Craft Assets/craft-block-1x1.png" assets/craft-32.cimg --size 32x32 --trim
 ```
+
+The app icons were rendered from the CraftOS App Icons design (PNGs in
+`../../../Craft Assets/app-icons`) and converted the same way. Solitaire's cards come from the
+CraftOS Solitaire design, whose PNGs are in `../../../Craft Assets/solitaire`;
+`tools/make-solitaire-cards.sh` shrinks them to 71 x 99 and packs them into `assets/sol-cards.cimg`
+and `assets/sol-extras.cimg` (it needs ImageMagick).
+
+The UI font is DejaVu Sans, from `../../../Craft Assets/fonts` (its license is
+`DejaVu-LICENSE.txt` there). Its glyphs were drawn by a browser's text renderer with grayscale
+smoothing and packed into `assets/sans-12.cfnt` and `assets/sans-bold-12.cfnt`: a small table of
+glyph widths plus a 0-255 coverage value per pixel, which the kernel blends over whatever is
+underneath.
 
 The converter only needs Python's standard library. `--format rgb` suits photos and gradients,
 and the default run-length format suits icons.
@@ -187,14 +242,18 @@ from this folder.
 | `src/power.c`      | Reboot and emulator power-off                                |
 | `src/console.c`    | VGA text and serial output, `kprintf`, the boot log          |
 | `src/shell.c`      | The shell and all its commands                               |
-| `src/gfx.c`        | Graphics mode on and off, clipped drawing, font, cursors     |
-| `src/gui.c`        | The desktop: windows, icons, taskbar, Start menu, scrollbars |
+| `src/gfx.c`        | Graphics mode on and off, clipped and see-through drawing, text, cursors |
+| `src/font.c`       | Loads the `.cfnt` fonts                                      |
+| `src/gui.c`        | The desktop: windows, icons, taskbar, Start menu, scrollbars, drag and drop |
 | `src/taskman.c`    | Task Manager app                                             |
 | `src/dialog.c`     | Dialogs: yes/no questions and messages, with status icons    |
 | `src/terminal.c`   | Terminal app (the shell in a window)                         |
 | `src/files.c`      | File manager app                                             |
 | `src/notepad.c`    | Notepad app                                                  |
 | `src/mines.c`      | Minesweeper                                                  |
+| `src/solitaire.c`  | Solitaire                                                    |
+| `src/recycle.c`    | Recycle Bin app                                              |
+| `src/trash.c`      | Moving things in and out of `~/.trash`                       |
 | `src/imgview.c`    | Image Viewer app                                             |
 | `src/pci.c`        | PCI bus scanning                                             |
 | `src/rtl8139.c`    | RTL8139 network card driver                                  |
@@ -206,6 +265,7 @@ from this folder.
 | `src/image.c`      | The `.cimg` image decoder                                    |
 | `src/assets.S`     | Builds the images in `assets/` into the kernel               |
 | `tools/img2cimg.py`| PNG to `.cimg` converter                                     |
+| `tools/make-solitaire-cards.sh` | Builds Solitaire's card sheets                  |
 | `src/sysfiles.c`   | The CraftOS folder layout and its live files                 |
 | `src/format.c`     | `ksnprintf`, shared by everything that formats text          |
 | `src/kernel.c`     | `kernel_main` and the text console's side of the shell       |

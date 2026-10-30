@@ -33,6 +33,7 @@ void gfx_unclip(void);
 
 void gfx_fill(int x, int y, int w, int h, uint32_t color);
 void gfx_rect(int x, int y, int w, int h, uint32_t color);
+void gfx_fill_alpha(int x, int y, int w, int h, uint32_t argb);
 void gfx_char(int x, int y, char c, uint32_t color);
 void gfx_text(int x, int y, const char *s, uint32_t color);
 void gfx_textn(int x, int y, const char *s, int max_chars, uint32_t color);
@@ -51,6 +52,15 @@ void gfx_bevel(int x, int y, int w, int h, bool raised);
 struct image;
 void gfx_blit(int x, int y, const struct image *img);
 void gfx_blit_scaled(int x, int y, int w, int h, const struct image *img);
+
+/*
+ * smooth text in a proportional font (see font.h), with (x, y) at the top
+ * left of the line. if max_w is more than 0, it stops before any letter that
+ * would go past that width. both say how many pixels wide the text was.
+ */
+struct font;
+int gfx_font_text(const struct font *f, int x, int y, const char *s, int max_w, uint32_t color);
+int gfx_font_width(const struct font *f, const char *s);
 
 enum { CURSOR_ARROW, CURSOR_RESIZE_H, CURSOR_RESIZE_V, CURSOR_RESIZE_D };
 

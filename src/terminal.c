@@ -40,7 +40,7 @@ static bool drag(struct window *win, int x, int y);
 static bool scroll(struct window *win, int rows);
 
 struct window terminal_window = {
-    .title = "Terminal", .proc = "terminal", .x = 60, .y = 36, .w = 520, .h = 320,
+    .title = "Terminal", .proc = "terminal", .icon = "term", .x = 60, .y = 36, .w = 520, .h = 320,
     .min_w = 240, .min_h = 140, .resizable = true,
     .draw = draw, .key = key, .click = click, .drag = drag, .scroll = scroll,
 };

@@ -2,22 +2,23 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define TASKBAR_H 28
+#define TASKBAR_H 40
 #define DESK_H    (480 - TASKBAR_H)
-#define TITLE_H   18
+#define TITLE_H   22
 
 /*
- * the classic colours: grey faces with white and dark edges, and navy for
- * title bars and anything selected.
+ * the craftos colours, taken from the craftos status icons design: a cream
+ * body for windows, a craft green for title bars and anything selected, and a
+ * dark ink colour for outlines.
  */
-#define C_DESKTOP 0x008080
-#define C_FACE    0xC0C0C0
-#define C_LIGHT   0xDFDFDF
+#define C_DESKTOP 0x1F7A4A
+#define C_FACE    0xECE9D8
+#define C_LIGHT   0xF6F4EC
 #define C_WHITE   0xFFFFFF
 #define C_BLACK   0x000000
-#define C_SHADOW  0x808080
-#define C_SELECT  0x000080
-#define C_INK     0x000000
+#define C_SHADOW  0x9C9784
+#define C_SELECT  0x2E8B4F
+#define C_INK     0x2B3A33
 
 /*
  * a window on the desktop. the desktop takes care of the frame, the title bar
@@ -52,8 +53,9 @@ struct window {
     bool modal;
 
     /*
-     * the app's icon name. the classic desktop draws its own icons, so here
-     * it's only a label
+     * the name of the app's icon in /usr/share/icons/apps, like "files" or
+     * "term". it shows up on the title bar and the taskbar button. 0 means no
+     * icon.
      */
     const char *icon;
 
@@ -69,35 +71,40 @@ struct window {
 
     /*
      * right_click gets right button presses in the content, just like click.
-     * can_close gets asked before the close button shuts the window, and an
-     * app with unsaved work can say no and ask the user what to do itself.
-     * release hears about it when the left button comes back up after a press
-     * in the content, hover gets told where the pointer is whenever it moves
-     * over the content, and tick gets called on every trip round the
-     * desktop's loop. they all return true when the screen needs redrawing.
+     * can_close gets asked before the close button shuts the window. an app
+     * with unsaved work can say no, and ask the user what to do itself.
      */
     bool (*right_click)(struct window *win, int x, int y);
     bool (*can_close)(struct window *win);
+
+    /*
+     * release hears about it when the left button comes back up after a press
+     * in the content.
+     */
     bool (*release)(struct window *win);
+
+    /*
+     * hover gets told where the pointer is whenever it moves over the
+     * content.
+     */
     bool (*hover)(struct window *win, int x, int y);
+
+    /*
+     * tick gets called on every trip round the desktop's loop (roughly every
+     * 10 ms). returning true asks for a redraw.
+     */
     bool (*tick)(struct window *win);
+
+    /*
+     * drop is how a window takes files dragged onto it. while a file is being
+     * dragged over the content, it gets called with really false, so it can
+     * highlight where the file would go and say whether it would take it.
+     * when the button comes up it's called once more with really true, and
+     * that's the moment to actually do it. x and y of -1 mean the file has
+     * left the window, so any highlight should go.
+     */
+    bool (*drop)(struct window *win, int x, int y, int node, bool really);
 };
-
-/*
- * asks for a redraw. any task can call this, like a download that just
- * finished.
- */
-void gui_poke(void);
-
-/*
- * text in the vga font, with (x, y) at the top left of a 16 pixel line.
- * ui_text_fit stops before it goes past max_w pixels (0 means no limit), and
- * says how wide it drew.
- */
-void ui_text(int x, int y, const char *s, uint32_t color);
-int ui_text_fit(int x, int y, const char *s, int max_w, uint32_t color, bool bold);
-int ui_text_width(const char *s, bool bold);
-
 
 /*
  * switches to graphics and runs the desktop until something asks it to stop,
@@ -107,11 +114,43 @@ int ui_text_width(const char *s, bool bold);
 bool gui_start(void);
 void gui_request_exit(void);
 
+/*
+ * asks for a redraw. any task can call this, like a download that just
+ * finished.
+ */
+void gui_poke(void);
+
 /* opens a window if it's closed or minimized, and brings it to the front. */
 void gui_open(struct window *win);
 void gui_close(struct window *win);
 
 void gui_shut_down(void) __attribute__((noreturn));
+
+/*
+ * dragging files around. an app calls gui_drag_file from its drag callback
+ * once the pointer has moved far enough with the button held on a file, and
+ * from then on the desktop carries the file under the pointer until it's
+ * dropped (or escape cancels it). read-only files can't be picked up, so it
+ * returns false for those.
+ *
+ * gui_move_file moves a file or folder into another folder, the same way for
+ * everyone who takes drops, and pops up a dialog if it can't.
+ */
+bool gui_drag_file(int node);
+bool gui_move_file(int node, int folder);
+
+/*
+ * a window's drop callback can call this while it's being asked (really
+ * false) to say what letting go would do, like "move to projects". it shows
+ * under the file's name next to the pointer.
+ */
+void gui_drag_hint(const char *text);
+
+/*
+ * the folder whose files show up on the desktop: the one in your home folder,
+ * made if it's missing.
+ */
+int gui_desktop_folder(void);
 
 /*
  * dialogs, with one of the status icons next to the message. gui_confirm asks
@@ -122,8 +161,26 @@ void gui_shut_down(void) __attribute__((noreturn));
 void gui_confirm(int icon, const char *title, const char *message, void (*on_yes)(void *ctx), void *ctx);
 void gui_message(int icon, const char *title, const char *message);
 
-/* little drawing pieces the apps all share. */
+/*
+ * asks for a line of text, starting with initial already typed in.
+ * on_ok(text, ctx) only runs if the user presses ok (or enter) with something
+ * typed.
+ */
+void gui_prompt(const char *title, const char *message, const char *initial,
+                void (*on_ok)(const char *text, void *ctx), void *ctx);
+
+/*
+ * text in the desktop's font (dejavu sans, which is smooth and proportional),
+ * with (x, y) at the top left of a 16 pixel line. ui_text_fit stops before it
+ * goes past max_w pixels. if the font files are missing, they all fall back
+ * to the vga font.
+ */
+void ui_text(int x, int y, const char *s, uint32_t color);
 void ui_text_bold(int x, int y, const char *s, uint32_t color);
+int ui_text_fit(int x, int y, const char *s, int max_w, uint32_t color, bool bold);
+int ui_text_width(const char *s, bool bold);
+
+/* little drawing pieces the apps all share. */
 void ui_button(int x, int y, int w, int h, const char *label, bool pressed);
 void ui_button_ex(int x, int y, int w, int h, const char *label, bool pressed, bool is_default);
 
@@ -131,6 +188,19 @@ void ui_button_ex(int x, int y, int w, int h, const char *label, bool pressed, b
 enum { ICON_INFO, ICON_QUESTION, ICON_WARNING, ICON_FAIL };
 void ui_status_icon(int icon, int x, int y, int size);
 void ui_logo(int x, int y, int size);
+
+/*
+ * mixes colour a towards b by t out of n, for apps drawing their own
+ * gradients.
+ */
+uint32_t ui_mix(uint32_t a, uint32_t b, int t, int n);
+
+/*
+ * an app icon from the craftos app icons design, by name ("files", "term",
+ * "notes" and so on), in 16, 28, 32 or 48 pixels. if there's no such icon, it
+ * just draws nothing.
+ */
+void ui_app_icon(const char *name, int x, int y, int size);
 void ui_folder_icon(int x, int y);
 void ui_file_icon(int x, int y);
 void ui_image_icon(int x, int y);

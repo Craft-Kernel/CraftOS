@@ -347,7 +347,7 @@ static int fetch_once(const struct url *u, struct http_result *res, char *locati
     int rlen = ksnprintf(req, sizeof(req),
                          "GET %s HTTP/1.1\r\n"
                          "Host: %s\r\n"
-                         "User-Agent: CraftOS (Craft Release 1)\r\n"
+                         "User-Agent: CraftOS (Craft Release 2)\r\n"
                          "Accept: */*\r\n"
                          "Accept-Encoding: identity\r\n"
                          "Connection: close\r\n\r\n",
