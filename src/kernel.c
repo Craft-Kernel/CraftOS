@@ -46,14 +46,26 @@ static struct shell console_shell = { .write = console_write_n, .clear = console
 
 /*
  * reads a line from the keyboard into buf, echoing it as it's typed, until
- * enter is pressed. only printable characters go in, and backspace rubs out
- * the last one.
+ * enter is pressed. only printable characters go in, backspace rubs out the
+ * last one, and up and down swap the line for an earlier command from the
+ * history (rubbing out what's there and typing the new one in its place).
  */
 static void read_line(char *buf, int max)
 {
+    struct shell_recall recall = { 0 };
     int len = 0;
     for (;;) {
         char c = keyboard_getchar();
+        if (c == KEY_UP || c == KEY_DOWN) {
+            int old = len;
+            if (shell_history_step(&recall, c == KEY_UP ? -1 : 1, buf, &len)) {
+                while (old--)
+                    console_putc('\b');
+                for (int i = 0; i < len; i++)
+                    console_putc(buf[i]);
+            }
+            continue;
+        }
         if (c == '\n') {
             console_putc('\n');
             buf[len] = '\0';
@@ -148,3 +160,4 @@ void kernel_main(uint32_t magic, struct multiboot_info *mbi)
         shell_run(&console_shell, line);
     }
 }
+
