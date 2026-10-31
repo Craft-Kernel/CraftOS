@@ -40,7 +40,7 @@ build:
 # to this terminal over serial. the rtc runs on local time so the taskbar
 # clock matches yours.
 run: $(KERNEL)
-	$(QEMU) -kernel $(KERNEL) -serial stdio -nic user,model=rtl8139 -rtc base=localtime
+	$(QEMU) -kernel $(KERNEL) -serial stdio -nic user,model=rtl8139 -rtc base=localtime -display sdl
 
 clean:
 	rm -rf build
