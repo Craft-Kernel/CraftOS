@@ -984,6 +984,7 @@ void shell_run(struct shell *sh, char *line)
 {
     char raw[SHELL_LINE_MAX + 1];
     strlcpy(raw, line, sizeof(raw));
+    shell_history_add(raw);
 
     char *argv[8];
     int argc = 0;
