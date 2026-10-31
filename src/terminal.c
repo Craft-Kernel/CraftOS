@@ -1,4 +1,5 @@
 #include <apps.h>
+#include <cpu.h>
 #include <gfx.h>
 #include <shell.h>
 #include <string.h>
@@ -25,6 +26,7 @@ static int cur_len;
 
 static char input[SHELL_LINE_MAX + 1];
 static int input_len;
+static struct shell_recall recall;
 
 /*
  * the view sticks to the bottom while new output comes in. scrolling up lets
@@ -170,14 +172,26 @@ static void update_follow(void)
 }
 
 /*
- * typing in the terminal. the scrolling keys scroll, enter runs the line you
- * typed through the shell, backspace rubs out a letter, and anything
- * printable gets added to the line. while a background job (like ping) is
- * still going, typing is ignored.
+ * typing in the terminal. up and down bring back earlier commands from the
+ * history, page up and page down scroll, enter runs the line you typed
+ * through the shell, backspace rubs out a letter, and anything printable
+ * gets added to the line. while a background job (like ping) is still going,
+ * typing is ignored, but scrolling still works.
  */
 static bool key(struct window *win, char c)
 {
     (void)win;
+    if ((c == KEY_UP || c == KEY_DOWN) && !sh.busy) {
+        int old = input_len;
+        if (!shell_history_step(&recall, c == KEY_UP ? -1 : 1, input, &input_len))
+            return false;
+        while (old--)
+            erase_char();
+        for (int i = 0; i < input_len; i++)
+            put_char(input[i]);
+        follow = true;
+        return true;
+    }
     if (ui_scroll_key(&sb, c)) {
         update_follow();
         return true;
@@ -190,6 +204,7 @@ static bool key(struct window *win, char c)
         input[input_len] = '\0';
         shell_run(&sh, input);
         input_len = 0;
+        recall.back = 0;
         /* after exit, start the next session on a clean screen */
         if (!terminal_window.open)
             clear_text();
