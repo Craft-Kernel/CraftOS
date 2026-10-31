@@ -42,7 +42,8 @@ manager, and a RAM disk laid out like a Linux system, the CraftOS way.
   every timer tick, plus an idle thread, sleeping, waiting for input, and per-task CPU use
 - Networking: a driver for the RTL8139 network card, and a small IPv4 stack on top of it
   (ARP, ICMP, UDP, DHCP at boot, DNS and TCP), with an HTTP/1.1 client for plain `http://`
-- A shell that runs both on the text console and in the desktop's Terminal app. Commands
+- A shell that runs both on the text console and in the desktop's Terminal app. Every command
+  gets saved to `~/cmd-history`, and the up and down keys bring earlier ones back. Commands
   live in `/bin`, so `help` lists that folder:
   - files: `ls`, `cd`, `pwd`, `cat`, `echo ... > file`, `mkdir`, `touch`, `rm`, `mv`, `trash`
   - tasks: `ps`, `kill`, `pause`, `resume`, `sleep`, `taskman`, plus the background programs
@@ -242,6 +243,7 @@ from this folder.
 | `src/power.c`      | Reboot and emulator power-off                                |
 | `src/console.c`    | VGA text and serial output, `kprintf`, the boot log          |
 | `src/shell.c`      | The shell and all its commands                               |
+| `src/history.c`    | The command history in `~/cmd-history`, and the up and down keys |
 | `src/gfx.c`        | Graphics mode on and off, clipped and see-through drawing, text, cursors |
 | `src/font.c`       | Loads the `.cfnt` fonts                                      |
 | `src/gui.c`        | The desktop: windows, icons, taskbar, Start menu, scrollbars, drag and drop |
