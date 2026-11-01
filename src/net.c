@@ -249,7 +249,14 @@ int ip_send(uint32_t dst, uint8_t proto, const void *payload, int len)
     if (!next_hop_mac(dst, mac))
         return NET_ERR_NO_ROUTE;
 
-    uint8_t frame[ETH_HEADER + 1500];
+    /*
+     * AI Contribution (Bug Fix): a static frame inside the card's interrupt,
+     * so answering a packet doesn't take another 1.5 kib from whatever
+     * thread's stack the interrupt landed on (see send_segment in tcp.c)
+     */
+    static uint8_t irq_frame[ETH_HEADER + 1500];
+    uint8_t stack_frame[net_in_irq ? 1 : ETH_HEADER + 1500];
+    uint8_t *frame = net_in_irq ? irq_frame : stack_frame;
     uint8_t *ip = frame + ETH_HEADER;
     ip[0] = 0x45;                /* version 4, with a 20 byte header */
     ip[1] = 0;
@@ -278,8 +285,14 @@ static void icmp_receive(uint32_t src, const uint8_t *p, int len)
     if (len < 8)
         return;
     if (p[0] == 8) {
-        /* an echo request, so send the same thing back as a reply */
-        uint8_t reply[1500];
+        /*
+         * an echo request, so send the same thing back as a reply.
+         * AI Contribution (Bug Fix): the reply buffer is static, since this
+         * only ever runs inside the card's interrupt, and 1.5 kib on top of
+         * whatever thread got interrupted was how a ping flood could run a
+         * stack over
+         */
+        static uint8_t reply[1500];
         if (len > (int)sizeof(reply))
             return;
         memcpy(reply, p, len);
@@ -336,6 +349,12 @@ static struct {
 
 bool udp_bind(uint16_t port, udp_handler_t handler)
 {
+    /*
+     * AI Contribution (Bug Fix): port 0 is what marks a slot as empty, so it
+     * can't also be a port someone's listening on
+     */
+    if (!port)
+        return false;
     for (int i = 0; i < UDP_BINDS; i++) {
         if (!binds[i].port) {
             binds[i].handler = handler;
@@ -349,8 +368,15 @@ bool udp_bind(uint16_t port, udp_handler_t handler)
 void udp_unbind(uint16_t port)
 {
     for (int i = 0; i < UDP_BINDS; i++)
-        if (binds[i].port == port)
+        if (binds[i].port == port) {
+            /*
+             * AI Contribution (Bug Fix): the handler goes too. it used to stay
+             * behind, so a packet sent to port 0 matched the emptied slot and
+             * still reached the old dns or dhcp handler.
+             */
             binds[i].port = 0;
+            binds[i].handler = 0;
+        }
 }
 
 /* the checksum is optional in ipv4, and zero means we left it out. */
@@ -387,7 +413,12 @@ static void ip_receive(const uint8_t *eth_src, const uint8_t *ip, int len)
         return;
     int header = (ip[0] & 0xF) * 4;
     int total = get16(ip + 2);
-    if (total > len || total < header)
+    /*
+     * AI Contribution (Bug Fix): an ipv4 header is at least 20 bytes. a packet
+     * claiming less put its payload inside its own header, and tcp and udp
+     * read their fields from the wrong place.
+     */
+    if (total > len || total < header || header < IP_HEADER)
         return;
     if (get16(ip + 6) & 0x3FFF)
         return;     /* we don't put fragments back together */
