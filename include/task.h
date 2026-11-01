@@ -107,6 +107,13 @@ void task_yield(void);
 void task_wait(void);
 void task_sleep(uint32_t ticks);
 
+/*
+ * AI Contribution (Bug Fix): keeps the timer from switching tasks until the
+ * matching task_preempt_on. they nest. don't sleep or wait in between.
+ */
+void task_preempt_off(void);
+void task_preempt_on(void);
+
 /* these get called from interrupt_handler. */
 uint32_t task_schedule(uint32_t esp, bool tick);
 void task_wake_waiting(void);
