@@ -21,6 +21,12 @@ struct shell {
      */
     volatile bool busy;
 
+    /*
+     * AI Contribution (Bug Fix): the background job's task, so the shell can
+     * tell when it's been killed instead of finishing (0 when there's none)
+     */
+    int job_pid;
+
     int cwd;
     uint32_t cwd_id;
 };
@@ -36,6 +42,13 @@ void shell_start(struct shell *sh);
 
 void shell_prompt(struct shell *sh);
 void shell_run(struct shell *sh, char *line);
+
+/*
+ * AI Contribution (Bug Fix): if the shell's background job got killed before
+ * it could finish, this lets go of busy and prints the prompt again, which
+ * the job would have done itself.
+ */
+void shell_check_job(struct shell *sh);
 
 /*
  * the command history in /home/crafter/cmd-history. shell_run adds every line
