@@ -623,6 +623,7 @@ static struct {
 static void job_main(void)
 {
     job.fn(job.sh, job.argc, job.argv, "");
+    job.sh->job_pid = 0;
     job.sh->busy = false;
     shell_prompt(job.sh);
     gui_poke();
@@ -661,7 +662,28 @@ static void run_slow(struct shell *sh, const char *name, cmd_fn fn, int argc, ch
     if (pid < 0) {
         sh->busy = false;
         shprintf(sh, "%s: %s\n", name, task_error(pid));
+    } else {
+        sh->job_pid = pid;
     }
+}
+
+/*
+ * AI Contribution (Bug Fix): a job only lets go of busy when it finishes, so
+ * killing it (from the task manager, or with kill) used to leave the terminal
+ * ignoring every key until a reboot. the terminal calls this as it draws and
+ * as keys come in, and once the job's task is gone, it tidies up after it.
+ */
+void shell_check_job(struct shell *sh)
+{
+    if (!sh->busy || sh->job_pid <= 0)
+        return;
+    struct task *t = task_by_pid(sh->job_pid);
+    if (t && t->state != TASK_DEAD)
+        return;
+    sh->job_pid = 0;
+    sh->busy = false;
+    shprintf(sh, "\n[stopped]\n");
+    shell_prompt(sh);
 }
 
 static bool net_ready(struct shell *sh, const char *cmd)
@@ -806,6 +828,11 @@ static void do_wget(struct shell *sh, int argc, char **argv, char *rest)
 
     shprintf(sh, "Fetching %s\n", url);
     static struct http_result res;
+    /*
+     * AI Contribution (Bug Fix): if the last wget was killed before it got to
+     * http_free, its body is still in here, so let go of it first
+     */
+    http_free(&res);
     int err = http_get(url, &res, wget_progress);
     if (err < 0) {
         shprintf(sh, "wget: %s\n", res.error);
@@ -832,7 +859,11 @@ static void do_wget(struct shell *sh, int argc, char **argv, char *rest)
     if (n < 0) {
         fail(sh, "wget", name, n);
     } else {
-        int werr = fs_write(n, res.body, res.len, false);
+        /*
+         * AI Contribution (Bug Fix): fs_write doesn't cut big writes short any
+         * more, so wget keeps the first 1 mib itself, the way it always did
+         */
+        int werr = fs_write(n, res.body, res.len < FS_BIG_MAX ? res.len : FS_BIG_MAX, false);
         if (werr < 0)
             fail(sh, "wget", name, werr);
         else
