@@ -50,8 +50,13 @@ void rtc_time(int *hour, int *minute, int *second)
         m = from_bcd(m);
         h = from_bcd(h);
     }
-    if (!(format & 0x02) && pm)
-        h = (h + 12) % 24;
+    /*
+     * AI Contribution (Bug Fix): on a 12 hour clock, 12 am is midnight and
+     * 12 pm is noon, so the 12 comes off before pm adds 12 back. adding 12
+     * for pm alone turned noon into midnight, and left 12 am as noon.
+     */
+    if (!(format & 0x02))
+        h = h % 12 + (pm ? 12 : 0);
 
     *hour = h;
     *minute = m;
