@@ -1,9 +1,29 @@
 #include <fs.h>
 #include <heap.h>
 #include <string.h>
+#include <task.h>
 
 static struct fs_node nodes[FS_MAX_NODES];
 static uint32_t next_id = 1;
+
+/*
+ * AI Contribution (Bug Fix): the ram disk had no locking, but two threads use
+ * it at once: the desktop, and a wget running as a background job. either
+ * could be switched out halfway through a change, and the other would find
+ * the table half done (two files given the same slot, or a file read out of a
+ * buffer that had just been freed). every function below that touches the
+ * table now starts with FS_LOCK, which switches preemption off until the
+ * function returns, however it returns (that's the cleanup attribute's job).
+ */
+static void fs_unlock(int *unused)
+{
+    (void)unused;
+    task_preempt_on();
+}
+
+#define FS_LOCK() \
+    task_preempt_off(); \
+    int fs_lock_ __attribute__((cleanup(fs_unlock), unused)) = 0
 
 const char *fs_error(int err)
 {
@@ -62,6 +82,7 @@ static int lookup(int dir, const char *name)
  */
 int fs_resolve(int cwd, const char *path)
 {
+    FS_LOCK();
     int n = cwd;
     if (path[0] == '/') {
         n = FS_ROOT;
@@ -141,6 +162,7 @@ static int new_node(int parent, const char *name, bool is_dir)
 
 int fs_create(int cwd, const char *path, bool is_dir)
 {
+    FS_LOCK();
     char name[FS_NAME_MAX];
     int parent = split(cwd, path, name);
     if (parent < 0)
@@ -158,6 +180,7 @@ int fs_create(int cwd, const char *path, bool is_dir)
 
 int fs_remove(int n)
 {
+    FS_LOCK();
     if (n == FS_ROOT || nodes[n].readonly || nodes[nodes[n].parent].readonly)
         return FS_ERR_READONLY;
     if (nodes[n].is_dir)
@@ -177,6 +200,7 @@ int fs_remove(int n)
  */
 int fs_remove_tree(int n)
 {
+    FS_LOCK();
     if (n == FS_ROOT || nodes[n].readonly || nodes[nodes[n].parent].readonly)
         return FS_ERR_READONLY;
     if (nodes[n].is_dir) {
@@ -200,6 +224,7 @@ int fs_remove_tree(int n)
  */
 int fs_move(int n, int cwd, const char *dest)
 {
+    FS_LOCK();
     if (n == FS_ROOT || nodes[n].readonly || nodes[nodes[n].parent].readonly)
         return FS_ERR_READONLY;
 
@@ -246,6 +271,7 @@ static bool sorts_before(int a, int b)
 
 int fs_list(int dir, int *out, int max)
 {
+    FS_LOCK();
     int count = 0;
     for (int i = 1; i < FS_MAX_NODES && count < max; i++) {
         if (!nodes[i].used || nodes[i].parent != dir)
@@ -271,6 +297,7 @@ int fs_list(int dir, int *out, int max)
  */
 void fs_path(int n, char *buf, int size)
 {
+    FS_LOCK();
     if (n == FS_ROOT) {
         strlcpy(buf, "/", size);
         return;
@@ -288,6 +315,7 @@ void fs_path(int n, char *buf, int size)
 
 void fs_short_path(int n, char *buf, int size)
 {
+    FS_LOCK();
     char full[256];
     fs_path(n, full, sizeof(full));
     int home_len = strlen(FS_HOME);
@@ -299,6 +327,7 @@ void fs_short_path(int n, char *buf, int size)
 
 int fs_read(int n, char *buf, int size)
 {
+    FS_LOCK();
     struct fs_node *f = &nodes[n];
     if (f->is_dir)
         return FS_ERR_IS_DIR;
@@ -328,6 +357,7 @@ const void *fs_blob(int n, int *size)
  */
 int fs_size(int n)
 {
+    FS_LOCK();
     static char scratch[FS_FILE_MAX];
     if (nodes[n].generate)
         return fs_read(n, scratch, sizeof(scratch));
@@ -341,6 +371,7 @@ int fs_size(int n)
  */
 int fs_write(int n, const char *data, int len, bool append)
 {
+    FS_LOCK();
     struct fs_node *f = &nodes[n];
     if (f->is_dir)
         return FS_ERR_IS_DIR;
@@ -348,10 +379,21 @@ int fs_write(int n, const char *data, int len, bool append)
         return 0;
     if (f->readonly || f->generate || f->blob)
         return FS_ERR_READONLY;
+    /*
+     * AI Contribution (Bug Fix): a negative length is somebody passing an
+     * error number instead of a size, and it would turn into a huge copy
+     * below, so it's handed straight back
+     */
+    if (len < 0)
+        return len;
 
     int start = append ? f->size : 0;
-    if (start + len > FS_BIG_MAX)
-        len = FS_BIG_MAX - start;
+    /*
+     * AI Contribution (Bug Fix): a write that won't fit fails, instead of
+     * quietly keeping only the part that fits and saying it worked
+     */
+    if (len > FS_BIG_MAX - start)
+        return FS_ERR_FULL;
     int need = start + len;
 
     /*
@@ -380,6 +422,7 @@ int fs_write(int n, const char *data, int len, bool append)
 /* follows the path, making any folders along the way that aren't there yet. */
 int fs_add_dir(const char *path, bool readonly)
 {
+    FS_LOCK();
     int n = FS_ROOT;
     char part[FS_NAME_MAX];
 
@@ -393,9 +436,19 @@ int fs_add_dir(const char *path, bool readonly)
             part[len++] = *path++;
         part[len] = '\0';
 
+        /*
+         * AI Contribution (Bug Fix): a part longer than a name can be is
+         * refused, not cut short. the rest of it used to carry on as another
+         * folder, so the path made a different one than was asked for.
+         */
+        if (*path && *path != '/')
+            return FS_ERR_BAD_NAME;
+
         int next = lookup(n, part);
         if (next < 0 && (next = new_node(n, part, true)) < 0)
             return next;
+        if (!nodes[next].is_dir)    /* AI Contribution (Bug Fix): not through a file */
+            return FS_ERR_NOT_DIR;
         n = next;
     }
     nodes[n].readonly = readonly;
@@ -408,6 +461,9 @@ static int add_file_node(const char *path)
     char dir[256];
     strlcpy(dir, path, sizeof(dir));
     char *slash = strrchr(dir, '/');
+    /* AI Contribution (Bug Fix): no slash, or nothing after it, isn't a file path */
+    if (!slash || !slash[1])
+        return FS_ERR_BAD_NAME;
     strlcpy(name, slash + 1, sizeof(name));
     *slash = '\0';
 
@@ -423,17 +479,19 @@ static int add_file_node(const char *path)
 
 int fs_add_file(const char *path, const char *text, bool readonly)
 {
+    FS_LOCK();
     int n = add_file_node(path);
     if (n < 0)
         return n;
     nodes[n].readonly = false;
-    fs_write(n, text, strlen(text), false);
+    int err = fs_write(n, text, strlen(text), false);
     nodes[n].readonly = readonly;
-    return n;
+    return err < 0 ? err : n;    /* AI Contribution (Bug Fix): say if it didn't fill in */
 }
 
 int fs_add_live(const char *path, fs_generator_t generate)
 {
+    FS_LOCK();
     int n = add_file_node(path);
     if (n < 0)
         return n;
@@ -444,6 +502,7 @@ int fs_add_live(const char *path, fs_generator_t generate)
 
 int fs_add_blob(const char *path, const void *data, int size)
 {
+    FS_LOCK();
     int n = add_file_node(path);
     if (n < 0)
         return n;
