@@ -4,7 +4,7 @@
 CC      := gcc
 LD      := ld
 QEMU    := qemu-system-i386
-AUDIO   ?= pa
+AUDIO   ?= sdl
 
 CFLAGS  := -m32 -march=i686 -std=gnu11 -O2 -g -Wall -Wextra \
            -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
