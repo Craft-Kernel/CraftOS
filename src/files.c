@@ -41,6 +41,7 @@ static struct scrollbar sb = { .grab = -1 };
  * (-2 for the folder that's showing, -1 when nothing's being dragged here).
  */
 static int press_node = -1;
+static uint32_t press_id;    /* AI Contribution (Bug Fix): press_node's id when it was pressed */
 static int press_x, press_y;
 static int drop_row = -1;
 
@@ -314,6 +315,7 @@ static bool click(struct window *win, int x, int y, bool double_click)
     } else {
         select_node(children[index]);
         press_node = children[index];
+        press_id = fs_node(children[index])->id;
         press_x = x;
         press_y = y;
     }
@@ -334,7 +336,14 @@ static bool drag(struct window *win, int x, int y)
         return false;
     int node = press_node;
     press_node = -1;
-    if (!fs_alive(node, fs_node(node)->id) || !gui_drag_file(node)) {
+    /*
+     * AI Contribution (Bug Fix): checked against the id from when the button
+     * went down. checking the node against its own current id always passed,
+     * so a file deleted and replaced in between got dragged instead.
+     */
+    if (!fs_alive(node, press_id))
+        return true;
+    if (!gui_drag_file(node)) {
         ksnprintf(status, sizeof(status), "%s is read-only, so it can't be moved.", fs_node(node)->name);
         return true;
     }
