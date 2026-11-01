@@ -105,6 +105,12 @@ int tcp_connect(uint32_t ip, uint16_t port, uint32_t timeout_ticks);
 int tcp_write(int s, const void *data, int len);
 int tcp_read(int s, void *buf, int max);
 void tcp_close(int s);
+
+/*
+ * AI Contribution (Bug Fix): drops every connection a task had open, for when
+ * the task is killed and can't close them itself. the other end gets a reset.
+ */
+void tcp_drop_task(int pid);
 void tcp_receive(uint32_t src, const uint8_t *seg, int len);
 
 /* the network card's driver. */
