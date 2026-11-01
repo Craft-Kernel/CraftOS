@@ -4,6 +4,7 @@
 CC      := gcc
 LD      := ld
 QEMU    := qemu-system-i386
+AUDIO   ?= pa
 
 CFLAGS  := -m32 -march=i686 -std=gnu11 -O2 -g -Wall -Wextra \
            -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
@@ -40,7 +41,7 @@ build:
 # to this terminal over serial. the rtc runs on local time so the taskbar
 # clock matches yours.
 run: $(KERNEL)
-	$(QEMU) -kernel $(KERNEL) -serial stdio -nic user,model=rtl8139 -rtc base=localtime -display sdl
+	$(QEMU) -kernel $(KERNEL) -serial stdio -nic user,model=rtl8139 -rtc base=localtime -display sdl -audiodev $(AUDIO),id=snd0 -machine pcspk-audiodev=snd0 -device sb16,audiodev=snd0
 
 clean:
 	rm -rf build
