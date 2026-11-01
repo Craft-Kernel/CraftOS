@@ -155,11 +155,23 @@ void rtl8139_send(const void *frame, int len)
     uint32_t flags = irq_save();
     int slot = tx_next;
     uint16_t tsd = io + REG_TSD0 + slot * 4;
-    for (int i = 0; i < 100000; i++) {
+    /*
+     * AI Contribution (Bug Fix): this used to wait up to 100,000 rounds (about
+     * a tenth of a second, all with interrupts off) and then write over the
+     * slot whether it was free or not. the card sends a frame in well under a
+     * millisecond, so if the slot's still busy after 2,000 rounds the card is
+     * stuck, and the frame is dropped instead (tcp sends it again anyway).
+     */
+    bool free = false;
+    for (int i = 0; i < 2000 && !free; i++) {
         uint32_t st = inl(tsd);
-        if (st & TSD_OWN || st == 0 || st == 0x2000)
-            break;
-        io_wait();
+        free = st & TSD_OWN || st == 0 || st == 0x2000;
+        if (!free)
+            io_wait();
+    }
+    if (!free) {
+        irq_restore(flags);
+        return;
     }
     memcpy(tx_buf[slot], frame, len);
     if (len < 60) {
