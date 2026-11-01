@@ -42,6 +42,13 @@ void heap_init(uint32_t mem_upper_kib)
 {
     first = (struct block *)(((uintptr_t)kernel_end + 15) & ~(uintptr_t)15);
     limit = (0x100000 + (uintptr_t)mem_upper_kib * 1024) & ~(uintptr_t)15;
+    /*
+     * AI Contribution (Bug Fix): if the kernel ends past where the ram does,
+     * the heap is left empty, instead of a size that wrapped round to nearly
+     * 4 gib
+     */
+    if (limit < (uintptr_t)first + MIN_SPLIT)
+        limit = (uintptr_t)first;
     first->size = limit - (uintptr_t)first;
     first->used = 0;
     first->magic = MAGIC;
@@ -57,11 +64,25 @@ void *kmalloc(size_t size)
 {
     if (size == 0)
         size = 1;
+    /*
+     * AI Contribution (Bug Fix): nothing bigger than the whole heap can fit,
+     * and a size this close to 4 gib would wrap round when it's rounded up
+     * below, into a request for almost nothing
+     */
+    if (size > limit - (uintptr_t)first)
+        return 0;
     size_t need = ((size + 15) & ~(size_t)15) + HEADER;
 
     uint32_t flags = irq_save();
     void *p = 0;
     for (struct block *b = first; b; b = after(b)) {
+        /*
+         * AI Contribution (Bug Fix): a header smaller than itself means
+         * something wrote over it, and after() would hand back the same block
+         * forever, with interrupts off. stop instead.
+         */
+        if (b->size < HEADER || b->magic != MAGIC)
+            break;
         if (b->used)
             continue;
 
@@ -122,6 +143,13 @@ void *krealloc(void *p, size_t size)
     if (!p)
         return kmalloc(size);
     struct block *b = (struct block *)p - 1;
+    /*
+     * AI Contribution (Bug Fix): the same check kfree makes. a pointer that
+     * isn't one of ours (or was already freed) gets a fresh block, instead of
+     * reading a size out of whatever memory is there.
+     */
+    if (b->magic != MAGIC || !b->used)
+        return kmalloc(size);
     size_t have = b->size - HEADER;
     if (size <= have)
         return p;
