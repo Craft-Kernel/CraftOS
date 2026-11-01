@@ -4,7 +4,9 @@
 #include <gfx.h>
 #include <heap.h>
 #include <net.h>
+#include <sb16.h>
 #include <shell.h>
+#include <speaker.h>
 #include <string.h>
 #include <sysfiles.h>
 #include <task.h>
@@ -134,6 +136,12 @@ void kernel_main(uint32_t magic, struct multiboot_info *mbi)
 
     __asm__ volatile("sti");
     ok("Interrupts enabled");
+    if (sb16_init())
+        ok("SB16 audio");
+    else
+        kprintf("[FAIL] SB16 audio\n");
+    sb16_play_tone(440, 500);
+    speaker_beep(440, 200);
 
     /* dhcp only waits a few seconds at most */
     if (net_init()) {

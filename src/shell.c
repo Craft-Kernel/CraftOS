@@ -8,7 +8,9 @@
 #include <io.h>
 #include <net.h>
 #include <programs.h>
+#include <sb16.h>
 #include <shell.h>
+#include <speaker.h>
 #include <stdarg.h>
 #include <string.h>
 #include <task.h>
@@ -512,6 +514,41 @@ static void cmd_clear(struct shell *sh, int argc, char **argv, char *rest)
     sh->clear();
 }
 
+static uint32_t parse_uint(const char *s, uint32_t fallback)
+{
+    uint32_t v = 0;
+    if (!s || !*s)
+        return fallback;
+    for (; *s >= '0' && *s <= '9'; s++)
+        v = v * 10 + (uint32_t)(*s - '0');
+    return *s ? fallback : v;
+}
+
+static void cmd_beep(struct shell *sh, int argc, char **argv, char *rest)
+{
+    (void)rest;
+    uint32_t freq = (argc >= 2) ? parse_uint(argv[1], 440) : 440;
+    uint32_t ms = (argc >= 3) ? parse_uint(argv[2], 200) : 200;
+    if (freq == 0) {
+        shprintf(sh, "beep: frequency must be > 0\n");
+        return;
+    }
+    speaker_beep(freq, ms);
+}
+
+static void cmd_tone(struct shell *sh, int argc, char **argv, char *rest)
+{
+    (void)rest;
+    uint32_t freq = (argc >= 2) ? parse_uint(argv[1], 440) : 440;
+    uint32_t ms = (argc >= 3) ? parse_uint(argv[2], 500) : 500;
+    if (freq == 0) {
+        shprintf(sh, "tone: frequency must be > 0\n");
+        return;
+    }
+    sb16_play_tone(freq, ms);
+    shprintf(sh, "played %u hz for %u ms\n", freq, ms);
+}
+
 static void cmd_uname(struct shell *sh, int argc, char **argv, char *rest)
 {
     (void)argc, (void)argv, (void)rest;
@@ -913,6 +950,7 @@ static const struct {
     const char *usage;
     cmd_fn fn;
 } commands[] = {
+    { "beep", "beep [FREQ_HZ] [MS]  beep the pc speaker", cmd_beep },
     { "cat", "cat FILE...  print files", cmd_cat },
     { "cd", "cd [PATH]  change folder (default ~)", cmd_cd },
     { "clear", "clear  clear the screen", cmd_clear },
@@ -944,6 +982,7 @@ static const struct {
     { "sleep", "sleep SECONDS  wait (text mode)", cmd_sleep },
     { "solitaire", "solitaire  play solitaire (desktop)", cmd_solitaire },
     { "taskman", "taskman  open the task manager (desktop)", cmd_taskman },
+    { "tone", "tone [FREQ_HZ] [MS]  play a tone on the sb16", cmd_tone },
     { "touch", "touch NAME...  make empty files", cmd_touch },
     { "trash", "trash PATH...  move to the Recycle Bin (--empty empties it)", cmd_trash },
     { "ui", "ui [exit]  start the desktop, or leave it", cmd_ui },
