@@ -24,8 +24,14 @@
 
 #define SOCKETS   8
 #define MSS       1460
-#define WINDOW    16384
-#define RX_LIMIT  (8 * 1024 * 1024)
+/*
+ * AI Contribution (Bug Fix): the receive buffer used to start at 16 kib and
+ * double inside the card's interrupt, up to 8 mib, copying everything over
+ * with interrupts off each time. now it's one fixed buffer, set up when the
+ * connection opens, and the window we advertise is however much of it is
+ * free, so the other end never sends more than fits. reading makes room again.
+ */
+#define RX_BUF    65535
 
 #define F_FIN 0x01
 #define F_SYN 0x02
@@ -37,6 +43,7 @@ enum { CLOSED, SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, LAST_A
 
 struct sock {
     bool used;
+    int owner;      /* AI Contribution (Bug Fix): the pid that opened it */
     volatile int state;
     uint32_t remote_ip;
     uint16_t remote_port, local_port;
@@ -44,7 +51,7 @@ struct sock {
     volatile uint32_t snd_una, rcv_nxt;
     uint8_t *rx;
     volatile int rx_len;
-    int rx_cap, rx_read;
+    int rx_read;
     volatile bool peer_fin, reset;
 };
 
@@ -71,7 +78,16 @@ static bool seq_after(uint32_t a, uint32_t b)
  */
 static void send_segment(struct sock *s, uint32_t seq, uint8_t flags, const void *data, int len)
 {
-    uint8_t seg[20 + 4 + MSS];
+    /*
+     * AI Contribution (Bug Fix): inside the card's interrupt, the segment is
+     * built in a static buffer instead of on the stack. the interrupt borrows
+     * whichever thread's stack was running, and 1.5 kib more of it here (plus
+     * the frame in ip_send) was a lot to take from someone else. interrupts
+     * don't nest, so the one static buffer is never in use twice.
+     */
+    static uint8_t irq_seg[20 + 4 + MSS];
+    uint8_t stack_seg[net_in_irq ? 1 : 20 + 4 + MSS];
+    uint8_t *seg = net_in_irq ? irq_seg : stack_seg;
     int header = flags & F_SYN ? 24 : 20;
     put16(seg, s->local_port);
     put16(seg + 2, s->remote_port);
@@ -79,7 +95,7 @@ static void send_segment(struct sock *s, uint32_t seq, uint8_t flags, const void
     put32(seg + 8, flags & F_ACK ? s->rcv_nxt : 0);
     seg[12] = header / 4 << 4;
     seg[13] = flags;
-    put16(seg + 14, WINDOW);
+    put16(seg + 14, s->rx ? RX_BUF - s->rx_len : 0);    /* AI Contribution (Bug Fix): the real free space */
     put16(seg + 16, 0);
     put16(seg + 18, 0);
     if (flags & F_SYN) {
@@ -106,22 +122,19 @@ static void send_ack(struct sock *s)
     send_segment(s, s->snd_nxt, F_ACK, 0, 0);
 }
 
-static void append(struct sock *s, const uint8_t *data, int len)
+/*
+ * AI Contribution (Bug Fix): says whether the data fit. it used to return
+ * nothing, and the caller acknowledged the bytes either way, so anything that
+ * didn't fit was lost for good: the other end thought it had arrived and
+ * never sent it again.
+ */
+static bool append(struct sock *s, const uint8_t *data, int len)
 {
-    if (s->rx_len + len > s->rx_cap) {
-        int cap = s->rx_cap ? s->rx_cap : 16384;
-        while (cap < s->rx_len + len)
-            cap *= 2;
-        if (cap > RX_LIMIT)
-            return;
-        uint8_t *bigger = krealloc(s->rx, cap);
-        if (!bigger)
-            return;
-        s->rx = bigger;
-        s->rx_cap = cap;
-    }
+    if (!s->rx || len > RX_BUF - s->rx_len)
+        return false;
     memcpy(s->rx + s->rx_len, data, len);
     s->rx_len += len;
+    return true;
 }
 
 /*
@@ -184,10 +197,13 @@ void tcp_receive(uint32_t src, const uint8_t *seg, int len)
     bool need_ack = false;
     if (dlen > 0) {
         uint32_t skip = s->rcv_nxt - seq;
-        if ((int32_t)skip >= 0 && (int)skip < dlen) {
-            append(s, data + skip, dlen - skip);
+        /*
+         * AI Contribution (Bug Fix): only move along when the bytes were kept.
+         * if they weren't, the ack still goes back, but for where we really
+         * are, so the other end sends them again once there's room.
+         */
+        if ((int32_t)skip >= 0 && (int)skip < dlen && append(s, data + skip, dlen - skip))
             s->rcv_nxt = seq + dlen;
-        }
         need_ack = true;
     }
 
@@ -221,18 +237,27 @@ int tcp_connect(uint32_t ip, uint16_t port, uint32_t timeout_ticks)
     if (!net.configured)
         return NET_ERR_NO_ADDRESS;
 
+    /* AI Contribution (Bug Fix): the whole receive buffer, up front */
+    uint8_t *rx = kmalloc(RX_BUF);
+    if (!rx)
+        return NET_ERR_FULL;
+
     int n = -1;
     uint32_t flags = irq_save();
     for (int i = 0; i < SOCKETS && n < 0; i++) {
         if (!socks[i].used) {
             memset(&socks[i], 0, sizeof(socks[i]));
             socks[i].used = true;
+            socks[i].rx = rx;
+            socks[i].owner = task_current()->pid;
             n = i;
         }
     }
     irq_restore(flags);
-    if (n < 0)
+    if (n < 0) {
+        kfree(rx);
         return NET_ERR_FULL;
+    }
 
     struct sock *s = &socks[n];
     s->remote_ip = ip;
@@ -262,7 +287,11 @@ int tcp_connect(uint32_t ip, uint16_t port, uint32_t timeout_ticks)
         return n;
 
     int err = s->reset ? NET_ERR_REFUSED : NET_ERR_TIMEOUT;
+    flags = irq_save();
     s->used = false;
+    s->rx = 0;
+    irq_restore(flags);
+    kfree(rx);
     return err;
 }
 
@@ -316,6 +345,7 @@ int tcp_read(int n, void *buf, int max)
     if (!s)
         return NET_ERR_CLOSED;
     uint32_t flags = irq_save();
+    int was_free = RX_BUF - s->rx_len;
     int avail = s->rx_len - s->rx_read;
     if (avail > max)
         avail = max;
@@ -323,14 +353,24 @@ int tcp_read(int n, void *buf, int max)
         memcpy(buf, s->rx + s->rx_read, avail);
         s->rx_read += avail;
         /*
-         * once everything's been read, start the buffer over from the
-         * beginning
+         * AI Contribution (Bug Fix): whatever's left unread slides down to
+         * the front, so the free space at the end (the window) grows back.
+         * before, the buffer only started over once every byte was read.
          */
-        if (s->rx_read == s->rx_len)
-            s->rx_read = s->rx_len = 0;
+        memmove(s->rx, s->rx + s->rx_read, s->rx_len - s->rx_read);
+        s->rx_len -= s->rx_read;
+        s->rx_read = 0;
     }
     bool done = s->peer_fin || s->reset || s->state == CLOSED;
+    bool reopened = was_free < 2 * MSS && RX_BUF - s->rx_len >= 2 * MSS;
     irq_restore(flags);
+    /*
+     * AI Contribution (Bug Fix): if the window had all but closed, say so as
+     * soon as there's room again, rather than waiting for the other end to
+     * come and ask
+     */
+    if (reopened && !done)
+        send_ack(s);
     if (avail > 0)
         return avail;
     return done ? (s->reset ? NET_ERR_RESET : NET_ERR_CLOSED) : 0;
@@ -360,4 +400,28 @@ void tcp_close(int n)
     s->rx = 0;
     irq_restore(flags);
     kfree(rx);
+}
+
+/*
+ * AI Contribution (Bug Fix): a task that gets killed never reaches tcp_close,
+ * so its sockets stayed taken forever, and after eight of them nothing could
+ * connect until a reboot. task_kill calls this to hand them back, with a
+ * reset so the other end knows the connection's gone.
+ */
+void tcp_drop_task(int pid)
+{
+    for (int i = 0; i < SOCKETS; i++) {
+        struct sock *s = &socks[i];
+        if (!s->used || s->owner != pid)
+            continue;
+        if (s->state != CLOSED && s->state != SYN_SENT)
+            send_segment(s, s->snd_nxt, F_RST | F_ACK, 0, 0);
+        uint32_t flags = irq_save();
+        s->state = CLOSED;
+        s->used = false;
+        uint8_t *rx = s->rx;
+        s->rx = 0;
+        irq_restore(flags);
+        kfree(rx);
+    }
 }
