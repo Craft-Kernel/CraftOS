@@ -160,4 +160,3 @@ void kernel_main(uint32_t magic, struct multiboot_info *mbi)
         shell_run(&console_shell, line);
     }
 }
-
