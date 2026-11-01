@@ -78,8 +78,47 @@ static void update_title(void)
     ksnprintf(notepad_window.title, sizeof(notepad_window.title), "Notepad - %s%s", name, dirty ? "*" : "");
 }
 
+/*
+ * AI Contribution (Bug Fix): notepad holds 16 kib, and a bigger file used to
+ * open with just the first 16 kib in it. saving then wrote that back over the
+ * whole file, and the rest was gone. now a file that's too big is refused,
+ * with a message saying so.
+ */
+static bool too_big(int node)
+{
+    if (node < 0 || fs_size(node) <= NOTE_MAX)
+        return false;
+    char msg[128];
+    ksnprintf(msg, sizeof(msg), "%s is too big for Notepad (%d bytes; it holds %d).",
+              fs_node(node)->name, fs_size(node), NOTE_MAX);
+    gui_message(ICON_FAIL, "Notepad", msg);
+    return true;
+}
+
+/*
+ * AI Contribution (Bug Fix): a question is about one particular file, so the
+ * file's node and id get written down when it's asked. if that slot got
+ * reused by something else before the answer came, the answer is dropped
+ * instead of opening or overwriting a different file.
+ */
+static int asked_node = -1;
+static uint32_t asked_id;
+
+static void ask_about(int node)
+{
+    asked_node = node;
+    asked_id = node >= 0 ? fs_node(node)->id : 0;
+}
+
+static bool still_asked(int node)
+{
+    return node == asked_node && (node < 0 || fs_alive(node, asked_id));
+}
+
 static void load(int node)
 {
+    if (too_big(node))
+        return;
     if (node >= 0) {
         int len = fs_read(node, text, sizeof(text));
         text_len = len < 0 ? 0 : len;
@@ -102,7 +141,9 @@ static void load(int node)
  */
 static void discard_and_load(void *ctx)
 {
-    load((int)(intptr_t)ctx);
+    int node = (int)(intptr_t)ctx;
+    if (still_asked(node))    /* AI Contribution (Bug Fix) */
+        load(node);
 }
 
 static void load_asking(int node)
@@ -111,6 +152,9 @@ static void load_asking(int node)
         load(node);
         return;
     }
+    if (too_big(node))    /* AI Contribution (Bug Fix): before asking, not after */
+        return;
+    ask_about(node);
     gui_confirm(ICON_WARNING, "Notepad",
                 "You have unsaved changes. If you open another document, your changes will be lost.",
                 discard_and_load, (void *)(intptr_t)node);
@@ -118,6 +162,8 @@ static void load_asking(int node)
 
 void notepad_open_file(int node)
 {
+    if (too_big(node))    /* AI Contribution (Bug Fix): don't even open the window */
+        return;
     gui_open(&notepad_window);
     load_asking(node);
 }
@@ -141,7 +187,9 @@ static void write_to(int node)
 
 static void replace_yes(void *ctx)
 {
-    write_to((int)(intptr_t)ctx);
+    int node = (int)(intptr_t)ctx;
+    if (still_asked(node))    /* AI Contribution (Bug Fix) */
+        write_to(node);
 }
 
 static int home_folder(void)
@@ -161,6 +209,7 @@ static void save_as_named(const char *name, void *ctx)
         gui_message(ICON_FAIL, "Notepad", msg);
     } else if (n >= 0) {
         ksnprintf(msg, sizeof(msg), "%s already exists. Do you want to replace it?", fs_node(n)->name);
+        ask_about(n);    /* AI Contribution (Bug Fix) */
         gui_confirm(ICON_QUESTION, "Save As", msg, replace_yes, (void *)(intptr_t)n);
     } else if ((n = fs_create(home_folder(), name, false)) < 0) {
         ksnprintf(msg, sizeof(msg), "Couldn't create %s: %s.", name, fs_error(n));
