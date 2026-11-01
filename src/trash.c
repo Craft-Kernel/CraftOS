@@ -8,6 +8,11 @@
  * "name~2", "name~3" and so on. a little table remembers each thing's
  * original folder and name, matched up by node and id, so a node slot that
  * got reused isn't mixed up with something that used to be in the bin.
+ *
+ * AI Contribution (Bug Fix): the original folder is kept as its node and id,
+ * not a written-out path. the path went into a 128 byte buffer, and a deep
+ * folder's path got cut short, so restoring went to the wrong place or
+ * failed. the path is only worked out now when something asks for it.
  */
 
 #define RECORDS 64
@@ -15,7 +20,8 @@
 static struct {
     int node;
     uint32_t id;
-    char from[128];
+    int from;
+    uint32_t from_id;
     char name[FS_NAME_MAX];
 } records[RECORDS];
 
@@ -63,20 +69,27 @@ int trash_put(int node)
     if (f->readonly || fs_node(f->parent)->readonly)
         return FS_ERR_READONLY;
 
-    char from[128], name[FS_NAME_MAX];
-    fs_path(f->parent, from, sizeof(from));
+    int from = f->parent;
+    uint32_t from_id = fs_node(from)->id;
+    char name[FS_NAME_MAX], base[FS_NAME_MAX - 3];
     strlcpy(name, f->name, sizeof(name));
+    /*
+     * AI Contribution (Bug Fix): leave room for the "~NN" a duplicate gets.
+     * a name already near the 24 character limit had no room for it, so the
+     * move came back "bad name" and the file couldn't be binned at all.
+     */
+    strlcpy(base, name, sizeof(base));
 
-    char dest[192];
+    char dest[FS_NAME_MAX];
     int err = FS_ERR_EXISTS;
     for (int i = 1; i < 100 && err == FS_ERR_EXISTS; i++) {
         if (i == 1)
-            ksnprintf(dest, sizeof(dest), "%s/%s", TRASH_DIR, name);
+            strlcpy(dest, name, sizeof(dest));
         else
-            ksnprintf(dest, sizeof(dest), "%s/%s~%d", TRASH_DIR, name, i);
-        if (fs_resolve(FS_ROOT, dest) >= 0)
+            ksnprintf(dest, sizeof(dest), "%s~%d", base, i);
+        if (fs_resolve(bin, dest) >= 0)
             continue;
-        err = fs_move(node, FS_ROOT, dest);
+        err = fs_move(node, bin, dest);
     }
     if (err < 0)
         return err;
@@ -93,7 +106,8 @@ int trash_put(int node)
         slot = 0;
     records[slot].node = node;
     records[slot].id = fs_node(node)->id;
-    strlcpy(records[slot].from, from, sizeof(records[slot].from));
+    records[slot].from = from;
+    records[slot].from_id = from_id;
     strlcpy(records[slot].name, name, sizeof(records[slot].name));
     return 0;
 }
@@ -106,8 +120,12 @@ int trash_list(int *out, int max)
 
 const char *trash_origin(int node)
 {
+    static char path[256];
     int r = find_record(node);
-    return r >= 0 ? records[r].from : "";
+    if (r < 0 || !fs_alive(records[r].from, records[r].from_id))
+        return "";
+    fs_path(records[r].from, path, sizeof(path));
+    return path;
 }
 
 /*
@@ -119,11 +137,11 @@ int trash_restore(int node)
     int r = find_record(node);
     if (r < 0)
         return FS_ERR_NOT_FOUND;
-    char dest[192];
-    ksnprintf(dest, sizeof(dest), "%s/%s", strcmp(records[r].from, "/") ? records[r].from : "", records[r].name);
-    if (fs_resolve(FS_ROOT, dest) >= 0)
+    if (!fs_alive(records[r].from, records[r].from_id))
+        return FS_ERR_NOT_FOUND;
+    if (fs_resolve(records[r].from, records[r].name) >= 0)
         return FS_ERR_EXISTS;
-    int err = fs_move(node, FS_ROOT, dest);
+    int err = fs_move(node, records[r].from, records[r].name);
     if (err < 0)
         return err;
     records[r].id = 0;
