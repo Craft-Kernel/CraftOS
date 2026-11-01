@@ -1,5 +1,6 @@
 #include <cpu.h>
 #include <io.h>
+#include <net.h>
 #include <string.h>
 #include <task.h>
 
@@ -19,12 +20,23 @@
  * off (irq_save) while it changes anything.
  */
 
-#define STACK_SIZE 16384
+/*
+ * AI Contribution (Bug Fix): stacks are 32 kib now (they were 16), and the
+ * bottom word of each one holds STACK_CANARY. the stacks sit right next to
+ * each other with nothing in between, so running off the end of one used to
+ * quietly scribble over the next thread's saved registers, and something
+ * would crash much later for no visible reason. the scheduler checks the
+ * canary every time it switches away from a thread, and panics with the
+ * thread's name the moment it's been overwritten.
+ */
+#define STACK_SIZE   32768
+#define STACK_CANARY 0xC4AF57ACu
 
 static struct task tasks[MAX_TASKS];
 static uint8_t stacks[MAX_TASKS][STACK_SIZE] __attribute__((aligned(16)));
 
 static int current = -1;
+static volatile int no_preempt;     /* AI Contribution (Bug Fix): see task_preempt_off */
 static int idle_slot;
 static int next_pid = 2;
 static uint32_t window_start;
@@ -115,6 +127,7 @@ static void task_start(void)
  */
 static int make_thread(int slot, int pid, const char *name, void (*entry)(void))
 {
+    *(uint32_t *)stacks[slot] = STACK_CANARY;
     uint32_t *sp = (uint32_t *)(stacks[slot] + STACK_SIZE);
     *--sp = 0;
     *--sp = 0x202;
@@ -198,6 +211,7 @@ int task_kill_anyway(int pid)
     uint32_t flags = irq_save();
     tasks[s].state = TASK_DEAD;
     irq_restore(flags);
+    tcp_drop_task(pid);     /* AI Contribution (Bug Fix): give back its sockets */
 
     if (s == current)
         task_yield();
@@ -230,6 +244,7 @@ int task_kill(int pid)
     uint32_t flags = irq_save();
     tasks[s].state = TASK_DEAD;
     irq_restore(flags);
+    tcp_drop_task(pid);     /* AI Contribution (Bug Fix): give back its sockets */
     return 0;
 }
 
@@ -322,6 +337,23 @@ int task_describe(char *buf, int size)
     return len < size ? len : size - 1;
 }
 
+/*
+ * AI Contribution (Bug Fix): switches preemption off and back on, counting,
+ * so it can be nested. while it's off, the timer doesn't take the cpu away
+ * from whoever's running, but interrupts still happen (the clock, the
+ * keyboard and the network keep working). it's how the ram disk keeps one
+ * thread from being switched out halfway through changing it.
+ */
+void task_preempt_off(void)
+{
+    __atomic_add_fetch(&no_preempt, 1, __ATOMIC_SEQ_CST);
+}
+
+void task_preempt_on(void)
+{
+    __atomic_sub_fetch(&no_preempt, 1, __ATOMIC_SEQ_CST);
+}
+
 /* ---- giving up the cpu ---- */
 
 void task_yield(void)
@@ -403,6 +435,25 @@ uint32_t task_schedule(uint32_t esp, bool tick)
     tasks[current].esp = esp;
     if (tick)
         account(now);
+
+    /*
+     * AI Contribution (Bug Fix): slot 0 runs on the boot stack, so it has no
+     * canary of its own to check
+     */
+    if (current != 0 && tasks[current].kind == TASK_THREAD &&
+        *(uint32_t *)stacks[current] != STACK_CANARY) {
+        static char why[64];
+        ksnprintf(why, sizeof(why), "task %d (%s) ran out of stack", tasks[current].pid, tasks[current].name);
+        panic(why);
+    }
+
+    /*
+     * AI Contribution (Bug Fix): while something has switched preemption off
+     * (the ram disk, mostly), a timer tick doesn't move the cpu on. a task
+     * giving up its turn on purpose still does.
+     */
+    if (tick && no_preempt)
+        return esp;
 
     if (tasks[0].state == TASK_DEAD)
         panic("the kernel task (pid 1) was killed");
