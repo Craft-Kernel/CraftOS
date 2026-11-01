@@ -134,10 +134,19 @@ static void draw(struct window *win, int cx, int cy, int cw, int ch)
     ui_text_fit(cx + 6, sy + 2, info, cw - 12, C_BLACK, false);
 }
 
+/*
+ * AI Contribution (Bug Fix): the node and id the question is about, kept
+ * together. the answer used to be checked against selected_id, which moves
+ * on if you click another row while the question's up, and then "yes"
+ * quietly did nothing.
+ */
+static int delete_node = -1;
+static uint32_t delete_id;
+
 static void delete_yes(void *ctx)
 {
     int node = (int)(intptr_t)ctx;
-    if (!fs_alive(node, selected_id))
+    if (node != delete_node || !fs_alive(node, delete_id))
         return;
     char name[FS_NAME_MAX];
     strlcpy(name, fs_node(node)->name, sizeof(name));
@@ -196,6 +205,8 @@ static void press_button(int b)
         } else {
             static char msg[96];
             ksnprintf(msg, sizeof(msg), "Delete \"%s\" for good? This can't be undone.", fs_node(selected)->name);
+            delete_node = selected;
+            delete_id = fs_node(selected)->id;
             gui_confirm(ICON_WARNING, "Recycle Bin", msg, delete_yes, (void *)(intptr_t)selected);
         }
         break;
