@@ -245,6 +245,13 @@ static void undo(void)
     g = undo_stack[--undo_count];
     g.started = started;    /* the clock keeps going */
     autofinish = false;
+    /*
+     * AI Contribution (Bug Fix): the board just changed under any cards being
+     * held, so let go of them. otherwise letting go of the mouse later used a
+     * pile and position from before the undo.
+     */
+    dragging = false;
+    drag_pile = -1;
 }
 
 /* ---- the rules ---- */
@@ -1087,6 +1094,13 @@ static bool release(struct window *win)
      * take it
      */
     int x = drag_x - drag_dx, y = drag_y - drag_dy;
+    /*
+     * AI Contribution (Bug Fix): if the pile changed while the cards were in
+     * the air, the index can point past its end, and reading the card there
+     * (and moving that many) runs off the pile
+     */
+    if (index < 0 || index >= pile(src)->n)
+        return true;
     int card = pile(src)->c[index], count = pile(src)->n - index;
     int best = -1, best_area = 0;
     for (int i = FOUND; i < PILES; i++) {
@@ -1219,7 +1233,7 @@ static bool tick(struct window *win)
      */
     if (!won && !dragging && open_menu < 0 && all_face_up())
         autofinish = true;
-    if (autofinish && !won && now - last_step >= 6) {
+    if (autofinish && !won && !dragging && now - last_step >= 6) {    /* AI Contribution (Bug Fix): not mid-drag */
         last_step = now;
         int best = -1, best_rank = 99;
         for (int i = TAB; i < PILES; i++) {
