@@ -334,6 +334,7 @@ static int fetch_once(const struct url *u, struct http_result *res, char *locati
         return fail(res, err, msg);
     }
 
+    static char *in_flight;
     struct conn c = { -1 };
     say(progress, "Connecting to %s...", u->host);
     c.sock = tcp_connect(ip, u->port, 6 * timer_hz());
@@ -360,7 +361,13 @@ static int fetch_once(const struct url *u, struct http_result *res, char *locati
 
     say(progress, "Waiting for %s...", u->host);
     int cap = 32768, len = 0, header_end = -1, content_length = -1;
-    char *buf = kmalloc(cap + 1);
+    /*
+     * AI Contribution (Bug Fix): the buffer being filled is also kept in
+     * in_flight, so if the task fetching it gets killed partway, the next
+     * fetch can free it instead of it being lost for good
+     */
+    kfree(in_flight);
+    char *buf = in_flight = kmalloc(cap + 1);
     if (!buf) {
         conn_close(&c);
         return fail(res, NET_ERR_FULL, "Out of memory.");
@@ -371,7 +378,7 @@ static int fetch_once(const struct url *u, struct http_result *res, char *locati
             char *bigger = krealloc(buf, cap * 2 + 1);
             if (!bigger)
                 break;
-            buf = bigger;
+            buf = in_flight = bigger;
             cap *= 2;
         }
         int n = conn_read(&c, buf + len, cap - len);
@@ -409,6 +416,7 @@ static int fetch_once(const struct url *u, struct http_result *res, char *locati
         task_sleep(1);
     }
     conn_close(&c);
+    in_flight = 0;
 
     if (header_end < 0) {
         kfree(buf);
