@@ -127,6 +127,7 @@ static int rows_for(int i, int cols)
  */
 static void draw(struct window *win, int cx, int cy, int cw, int ch)
 {
+    shell_check_job(&sh);    /* AI Contribution (Bug Fix): notice a killed job */
     (void)win;
     int tw = cw - SCROLLBAR_W;
     gfx_fill(cx, cy, tw, ch, C_BLACK);
@@ -181,6 +182,7 @@ static void update_follow(void)
 static bool key(struct window *win, char c)
 {
     (void)win;
+    shell_check_job(&sh);    /* AI Contribution (Bug Fix): notice a killed job */
     if ((c == KEY_UP || c == KEY_DOWN) && !sh.busy) {
         int old = input_len;
         if (!shell_history_step(&recall, c == KEY_UP ? -1 : 1, input, &input_len))
