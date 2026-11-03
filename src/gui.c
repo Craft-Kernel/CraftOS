@@ -7,6 +7,7 @@
 #include <gui.h>
 #include <image.h>
 #include <io.h>
+#include <sb16.h>
 #include <string.h>
 #include <task.h>
 #include <trash.h>
@@ -2048,6 +2049,7 @@ bool gui_start(void)
     close_start_menu();
     hold = HOLD_NONE;
     gui_open(&welcome_window);
+    sb16_chime_ui();
 
     gui_run();
 
