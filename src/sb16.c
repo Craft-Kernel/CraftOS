@@ -17,6 +17,7 @@
 static int16_t audio_buf[MAX_SAMPLES] __attribute__((aligned(131072)));
 static volatile int sb_done = 0;
 static int sb_present = 0;
+static int sb_pending = 0;
 
 #define SINE_AMPLITUDE 30000
 
@@ -114,7 +115,16 @@ static void dma_setup(uint32_t samples)
     (void)bytes;
 }
 
-static void sb16_play(uint32_t samples)
+/* waits out a chime that's still playing, so nothing writes over its samples */
+static void sb16_finish(void)
+{
+    uint32_t start = timer_ticks();
+    while (sb_pending && !sb_done && (int32_t)(timer_ticks() - start) < (int32_t)(timer_hz() * 3))
+        task_yield();
+    sb_pending = 0;
+}
+
+static void sb16_play(uint32_t samples, int wait)
 {
     if (samples == 0 || samples > MAX_SAMPLES)
         samples = MAX_SAMPLES;
@@ -130,12 +140,16 @@ static void sb16_play(uint32_t samples)
 
     /* 16-bit DAC, single-cycle, signed mono */
     dsp_write(0xB0);
-    dsp_write(0x08);
-    uint32_t len = samples * 2 - 1;
+    dsp_write(0x10);
+    uint32_t len = samples - 1;
     dsp_write(len & 0xFF);
     dsp_write((len >> 8) & 0xFF);
 
     /* wait for completion (with a timeout so a missing irq can't hang the kernel) */
+    if (!wait) {
+        sb_pending = 1;
+        return;
+    }
     uint32_t start = timer_ticks();
     while (!sb_done && (int32_t)(timer_ticks() - start) < (int32_t)(timer_hz() * 3)) {
         task_yield();
@@ -168,6 +182,7 @@ void sb16_play_tone(uint32_t freq_hz, uint32_t duration_ms)
 {
     if (!sb_present)
         return;
+    sb16_finish();
     if (freq_hz == 0)
         freq_hz = 440;
     if (duration_ms == 0)
@@ -190,5 +205,86 @@ void sb16_play_tone(uint32_t freq_hz, uint32_t duration_ms)
         phase += step;
     }
 
-    sb16_play(samples);
+    sb16_play(samples, 1);
+}
+
+struct chime_note {
+    uint16_t freq_hz;
+    uint16_t start_ms;
+    uint16_t ring_ms;   /* how long it takes to fade to about a third */
+    uint8_t volume;     /* out of 255 */
+};
+
+/* mixes a few notes that fade in quickly and ring out slowly, like a small
+   bell with a touch of its octave on top, then plays them in the background
+   so whatever comes next doesn't have to wait */
+static void play_chime(const struct chime_note *notes, int count, uint32_t length_ms)
+{
+    if (!sb_present)
+        return;
+    sb16_finish();
+
+    uint32_t samples = SAMPLE_RATE * length_ms / 1000;
+    if (samples > MAX_SAMPLES)
+        samples = MAX_SAMPLES;
+    for (uint32_t i = 0; i < samples; i++)
+        audio_buf[i] = 0;
+
+    for (int n = 0; n < count; n++) {
+        const struct chime_note *note = &notes[n];
+        uint32_t first = SAMPLE_RATE * note->start_ms / 1000;
+        uint32_t step = (((uint32_t)note->freq_hz << 20) / SAMPLE_RATE) << 12;
+        uint32_t fade = 65536 - 65536 / (SAMPLE_RATE * note->ring_ms / 1000);
+        uint32_t env = 65536, phase = 0;
+
+        for (uint32_t i = first; i < samples && env > 64; i++) {
+            int32_t s = sine_table[phase >> 24] + sine_table[(phase << 1) >> 24] / 4;
+            s = (s * note->volume) >> 8;
+            s = (s * (int32_t)(env >> 1)) >> 15;
+            if (i - first < 110)
+                s = s * (int32_t)(i - first) / 110;
+
+            int32_t mixed = audio_buf[i] + s;
+            audio_buf[i] = mixed > 32767 ? 32767 : mixed < -32768 ? -32768 : mixed;
+            phase += step;
+            env = (env * fade) >> 16;
+        }
+    }
+
+    /* the last tenth of a second fades to silence, so it never ends on a click */
+    uint32_t tail = SAMPLE_RATE / 10;
+    for (uint32_t i = 0; i < tail && i < samples; i++)
+        audio_buf[samples - 1 - i] = audio_buf[samples - 1 - i] * (int32_t)i / (int32_t)tail;
+
+    sb16_play(samples, 0);
+}
+
+void sb16_chime_text(void)
+{
+    static const struct chime_note notes[] = {
+        { 440, 0, 180, 60 },
+        { 659, 140, 180, 52 },
+        { 880, 280, 300, 56 },
+    };
+    play_chime(notes, 3, 900);
+}
+
+void sb16_chime_dialog(void)
+{
+    static const struct chime_note notes[] = {
+        { 784, 0, 160, 70 },
+        { 1175, 120, 260, 60 },
+    };
+    play_chime(notes, 2, 750);
+}
+
+void sb16_chime_ui(void)
+{
+    static const struct chime_note notes[] = {
+        { 523, 0, 200, 50 },
+        { 659, 110, 200, 45 },
+        { 784, 220, 220, 45 },
+        { 1047, 330, 320, 52 },
+    };
+    play_chime(notes, 4, 1000);
 }
