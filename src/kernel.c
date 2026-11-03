@@ -140,8 +140,7 @@ void kernel_main(uint32_t magic, struct multiboot_info *mbi)
         ok("SB16 audio");
     else
         kprintf("[FAIL] SB16 audio\n");
-    sb16_play_tone(440, 500);
-    speaker_beep(440, 200);
+    sb16_chime_text();
 
     /* dhcp only waits a few seconds at most */
     if (net_init()) {
