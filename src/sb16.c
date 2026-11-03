@@ -16,6 +16,7 @@
 
 static int16_t audio_buf[MAX_SAMPLES] __attribute__((aligned(131072)));
 static volatile int sb_done = 0;
+static int sb_present = 0;
 
 #define SINE_AMPLITUDE 30000
 
@@ -53,17 +54,17 @@ static void build_sine_table(void)
 
 static void dsp_write(uint8_t v)
 {
-    while (inb(SB_WRITE) & 0x80) { }
+    for (int i = 0; i < 100000 && (inb(SB_WRITE) & 0x80); i++) { }
     outb(SB_WRITE, v);
 }
 
 static uint8_t dsp_read(void)
 {
-    while (!(inb(SB_STATUS) & 0x80)) { }
+    for (int i = 0; i < 100000 && !(inb(SB_STATUS) & 0x80); i++) { }
     return inb(SB_READ);
 }
 
-static void dsp_reset(void)
+static int dsp_reset(void)
 {
     outb(SB_RESET, 1);
     for (volatile int i = 0; i < 10000; i++) { }
@@ -71,9 +72,10 @@ static void dsp_reset(void)
     for (int i = 0; i < 100000; i++) {
         if (inb(SB_STATUS) & 0x80) {
             if (inb(SB_READ) == 0xAA)
-                return;
+                return 1;
         }
     }
+    return 0;
 }
 
 static void sb16_irq(struct regs *r)
@@ -143,7 +145,10 @@ static void sb16_play(uint32_t samples)
 int sb16_init(void)
 {
     build_sine_table();
-    dsp_reset();
+
+    /* no card answered the reset, so leave it alone instead of waiting on it forever */
+    if (!dsp_reset())
+        return 0;
 
     /* check version */
     dsp_write(0xE1);
@@ -155,11 +160,14 @@ int sb16_init(void)
     /* enable speaker (sb16 mostly ignores, but harmless) */
     dsp_write(0xD1);
 
+    sb_present = 1;
     return 1;
 }
 
 void sb16_play_tone(uint32_t freq_hz, uint32_t duration_ms)
 {
+    if (!sb_present)
+        return;
     if (freq_hz == 0)
         freq_hz = 440;
     if (duration_ms == 0)
