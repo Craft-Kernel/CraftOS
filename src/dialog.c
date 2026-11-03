@@ -1,5 +1,6 @@
 #include <apps.h>
 #include <gfx.h>
+#include <sb16.h>
 #include <string.h>
 
 /*
@@ -59,6 +60,7 @@ static void show(int k, int ic, const char *title, const char *msg)
     dialog_window.x = (GFX_WIDTH - DIALOG_W) / 2;
     dialog_window.y = (DESK_H - DIALOG_H) / 2;
     gui_open(&dialog_window);
+    sb16_chime_dialog();
 }
 
 void gui_confirm(int ic, const char *title, const char *msg, void (*on_yes)(void *ctx), void *ctx)
